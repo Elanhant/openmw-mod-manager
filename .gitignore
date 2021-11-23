@@ -90,4 +90,4 @@ out/
 
 mod_manager_config.json
 mods_list_manager_config.json
-public/build/
+public/build/*

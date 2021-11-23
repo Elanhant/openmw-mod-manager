@@ -58,6 +58,13 @@ const modsListManagerConfig = require(PATH_TO_MODS_LIST_MANAGER_CONFIG);
 
 /**
  * @async
+ * @callback removeModFn
+ * @param {string} modID
+ * @returns {Promise<ModsListManagerConfig>}
+ */
+
+/**
+ * @async
  * @callback saveToOpenMWConfigFn
  * @param {string} openMWConfigPath
  * @returns {Promise<void>}
@@ -68,6 +75,7 @@ const modsListManagerConfig = require(PATH_TO_MODS_LIST_MANAGER_CONFIG);
  * @property {getConfigFn} getConfig
  * @property {updateModsListFn} updateModsList
  * @property {toggleModFn} toggleMod
+ * @property {removeModFn} removeMod
  * @property {saveToOpenMWConfigFn} saveToOpenMWConfig
  */
 
@@ -151,6 +159,14 @@ function ModsListManager() {
         return currentModsConfig;
       });
     },
+    async removeMod(modID) {
+      return await updateModsListConfig((currentModsConfig) => {
+        currentModsConfig.modsList = currentModsConfig.modsList.filter(
+          (mod) => mod.id !== modID
+        );
+        return currentModsConfig;
+      });
+    },
     async saveToOpenMWConfig(openMWConfigPath) {
       if (modsConfig == null) {
         throw new Error("Cannot save null mods config to OpenMW config!");
@@ -161,16 +177,46 @@ function ModsListManager() {
         "utf8"
       );
 
+      const modPromises = modsConfig.modsList.map(
+        (mod) =>
+          new Promise(async (resolve) => {
+            const bsaFileNames = await collectBSAFileNames(mod.dataFolder);
+
+            resolve({
+              bsaFileNames,
+              mod,
+            });
+          })
+      );
+
+      const modsInfo = await Promise.all(modPromises);
+
       /** @type {string} */
-      const dataLines = modsConfig.modsList
-        .map((mod) => {
+      const dataLines = modsInfo
+        .map(({ mod }) => {
           const dataStr = `data="${mod.dataFolder}"`;
           return mod.disabled ? `#${dataStr}` : dataStr;
         })
-        .reverse()
+        // .reverse()
+        .join("\n");
+
+      const fallbackArchiveLines = modsInfo
+        .map(({ bsaFileNames }) =>
+          bsaFileNames.length > 0
+            ? bsaFileNames
+                .map((fileName) => `fallback-archive=${fileName}`)
+                .join("\n")
+            : null
+        )
+        .filter(Boolean)
         .join("\n");
 
       let openMWConfigRaw = rawOpenMWConfig
+        .replace(
+          /((#\s*)?fallback-archive=.+(\r?\n?)?)+/,
+          "====INSERT FALLBACK ARCHIVES HERE====\r\n"
+        )
+        .replace("====INSERT FALLBACK ARCHIVES HERE====", fallbackArchiveLines)
         .replace(/((#\s*)?data=.+(\r?\n?)?)+/, "====INSERT DATA HERE====\r\n")
         .replace("====INSERT DATA HERE====", dataLines);
 
@@ -209,4 +255,14 @@ function parseOpenMWConfigV2(fileContent) {
   return {
     modsList,
   };
+}
+
+/**
+ * @async
+ * @param {string} modPath
+ * @returns {Promise<string[]>}
+ */
+async function collectBSAFileNames(modPath) {
+  const files = await fsPromises.readdir(modPath);
+  return files.filter((file) => file.toLowerCase().endsWith(".bsa"));
 }

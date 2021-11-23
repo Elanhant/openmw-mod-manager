@@ -1,3 +1,10 @@
+/**
+ * TODO:
+ *  - consistent event names
+ *  - JSDoc
+ *  - shared typedefs file
+ */
+
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
 const fsPromises = require("fs").promises;
@@ -37,6 +44,7 @@ const createWindow = () => {
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: true,
+      enableRemoteModule: true,
     },
   });
 
@@ -184,6 +192,39 @@ const createWindow = () => {
     console.log("directories selected", result.filePaths);
     handleAddDataFolders(event, result.filePaths);
   });
+
+  /**
+   *
+   * @param {Electron.IpcMainEvent} event
+   * @param {string} modID
+   */
+  async function handleRemoveMod(event, modID) {
+    if (modsListManager == null) {
+      throw new Error("Not initialized!");
+    }
+    const updatedConfig = await modsListManager.removeMod(modID);
+    mainWindow.webContents.send("openMWConfigReady", updatedConfig);
+  }
+  ipcMain.on("remove-mod", handleRemoveMod);
+
+  /**
+   *
+   * @param {Electron.IpcMainEvent} event
+   * @param {string[]} filePaths
+   */
+  async function handleDropDirs(event, filePaths) {
+    console.log(filePaths);
+    const isFolderList = (
+      await Promise.all(filePaths.map((filePath) => fsPromises.lstat(filePath)))
+    ).map((stat) => stat.isDirectory());
+
+    const dataFolderPaths = filePaths
+      .filter((_file, idx) => isFolderList[idx] === true)
+      .sort();
+    console.log(dataFolderPaths);
+    handleAddDataFolders(event, dataFolderPaths);
+  }
+  ipcMain.on("drop-dirs", handleDropDirs);
   ipcMain.on("run-open-mw", async (event) => {
     console.log("run-open-mw");
     if (modManagerConfig.openMWLauncherPath == null) {
