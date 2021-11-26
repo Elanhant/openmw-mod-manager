@@ -40,7 +40,7 @@
   }
   function handleDndFinalize(e) {
     currentMods = e.detail.items;
-    ipcRenderer.send("reorderMods", currentMods);
+    ipcRenderer.send("reorder-mods", currentMods);
   }
 
   /**
@@ -48,11 +48,11 @@
    * @param {string} modID
    */
   function handleToggleMod(modID) {
-    ipcRenderer.send("toggleMod", modID);
+    ipcRenderer.send("toggle-mod", modID);
   }
 
   function handleSaveToOpenMWConfig() {
-    ipcRenderer.send("saveToOpenMWConfig");
+    ipcRenderer.send("update-openmw-config");
   }
 
   ipcRenderer.on("configReady", (event, config) => {
@@ -60,20 +60,20 @@
     modManagerConfig = config;
   });
 
-  ipcRenderer.on("openMWConfigReady", (event, config) => {
+  ipcRenderer.on("openmw-config-ready", (event, config) => {
     console.log(config);
     openMWConfig = config;
   });
 
-  ipcRenderer.on("selectOpenMWConfigFile", (event, config) => {
-    console.log("selectOpenMWConfigFile", config);
+  ipcRenderer.on("select-openmw-config-file", (event, config) => {
+    console.log("select-openmw-config-file", config);
     openMWConfig = config;
   });
 
   function selectOpenMWConfig(event) {
     /** @type {File} */
     const file = event.target.files[0];
-    ipcRenderer.send("selectOpenMWConfigFile", file.path);
+    ipcRenderer.send("select-openmw-config-file", file.path);
   }
 
   function handleSelectDirs(event) {
@@ -89,6 +89,15 @@
     window.postMessage({
       type: "run-open-mw",
     });
+  }
+
+  function handleSortContent(event) {
+    event.preventDefault();
+    console.log("handleSortContent");
+    ipcRenderer.send("sort-content");
+    // window.postMessage({
+    //   type: "sort-content",
+    // });
   }
 
   function getModName(mod) {
@@ -145,9 +154,10 @@
       />
       <button type="button" on:click={handleSelectDirs}>Add mod</button>
       <button type="button" on:click={handleSaveToOpenMWConfig}
-        >Save OpenMW config</button
+        >Update OpenMW config</button
       >
       <button type="button" on:click={handleRunOpenMW}>Run OpenMW</button>
+      <button type="button" on:click={handleSortContent}>Sort content</button>
     </section>
     <!-- {/if} -->
     {#if openMWConfig}

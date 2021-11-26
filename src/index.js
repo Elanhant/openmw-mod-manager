@@ -1,28 +1,33 @@
 /**
  * TODO:
- *  - consistent event names
  *  - JSDoc
  *  - shared typedefs file
+ *  - XState
  */
 
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
 const fsPromises = require("fs").promises;
 const ModsListManager = require("./ModsListManager");
+const { parseCfg, stringifyCfg } = require("./cfg");
 
-const PATH_TO_MOD_MANAGER_CONFIG = path.join(
+const MOD_MANAGER_CONFIG_PATH = path.join(
   __dirname,
   "../mod_manager_config.json"
 );
+
+const TEMP_DIR_PATH = path.join(__dirname, "../temp");
+const TEMP_GAME_FILES_INI_FILENAME = "game_files.ini";
 
 /**
  * @typedef {Object} ModManagerConfig
  * @property {string} openMWConfigPath
  * @property {string} openMWLauncherPath
+ * @property {string} mloxPath
  */
 
 /** @type {ModManagerConfig} */
-const modManagerConfig = require(PATH_TO_MOD_MANAGER_CONFIG);
+const modManagerConfig = require(MOD_MANAGER_CONFIG_PATH);
 
 // Live Reload
 require("electron-reload")(__dirname, {
@@ -36,17 +41,50 @@ if (require("electron-squirrel-startup")) {
   app.quit();
 }
 
+/**
+ * @async
+ * @returns {Promise<import('./cfg').CfgParsed>}
+ */
+async function parseOpenMWConfig() {
+  if (modManagerConfig.openMWConfigPath == null) {
+    return parseCfg("");
+  }
+
+  const rawOpenMWConfig = await fsPromises.readFile(
+    modManagerConfig.openMWConfigPath,
+    "utf-8"
+  );
+
+  return parseCfg(rawOpenMWConfig);
+}
+
+/**
+ * @async
+ * @param {import('./cfg').CfgParsed} cfgParsed
+ * @returns {Promise<void>}
+ */
+async function saveOpenMWConfig(cfgParsed) {
+  if (modManagerConfig.openMWConfigPath == null) {
+    return;
+  }
+
+  const rawOpenMWConfig = stringifyCfg(cfgParsed);
+  console.log(rawOpenMWConfig);
+}
+
 const createWindow = () => {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
+    // width: 800,
+    // height: 600,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: true,
       enableRemoteModule: true,
     },
   });
+
+  mainWindow.maximize();
 
   // and load the index.html of the app.
   mainWindow.loadFile(path.join(__dirname, "../public/index.html"));
@@ -61,8 +99,9 @@ const createWindow = () => {
 
     if (modManagerConfig.openMWConfigPath != null) {
       const modsConfig = await modsListManager.getConfig();
-      console.log(modsConfig);
-      mainWindow.webContents.send("openMWConfigReady", modsConfig);
+      // console.log(modsConfig);
+      // saveOpenMWConfig(await parseOpenMWConfig());
+      mainWindow.webContents.send("openmw-config-ready", modsConfig);
     }
   });
 
@@ -80,13 +119,13 @@ const createWindow = () => {
     const newModManagerConfig = { ...modManagerConfig };
 
     await fsPromises.writeFile(
-      PATH_TO_MOD_MANAGER_CONFIG,
+      MOD_MANAGER_CONFIG_PATH,
       JSON.stringify(newModManagerConfig, null, 2)
     );
 
     // modsConfigController = OpenMWModsConfigController(filePath);
     // const modsConfig = await modsConfigController.getConfig();
-    // mainWindow.webContents.send('openMWConfigReady', modsConfig)
+    // mainWindow.webContents.send('openmw-config-ready', modsConfig)
   };
 
   /**
@@ -103,7 +142,7 @@ const createWindow = () => {
     const newModManagerConfig = { ...modManagerConfig };
 
     await fsPromises.writeFile(
-      PATH_TO_MOD_MANAGER_CONFIG,
+      MOD_MANAGER_CONFIG_PATH,
       JSON.stringify(newModManagerConfig, null, 2)
     );
   };
@@ -137,7 +176,7 @@ const createWindow = () => {
       }
     );
 
-    mainWindow.webContents.send("openMWConfigReady", updatedConfig);
+    mainWindow.webContents.send("openmw-config-ready", updatedConfig);
   };
 
   /**
@@ -151,7 +190,7 @@ const createWindow = () => {
     }
     const updatedConfig = await modsListManager.updateModsList(() => modList);
 
-    mainWindow.webContents.send("openMWConfigReady", updatedConfig);
+    mainWindow.webContents.send("openmw-config-ready", updatedConfig);
   }
 
   /**
@@ -165,7 +204,7 @@ const createWindow = () => {
     }
     const updatedConfig = await modsListManager.toggleMod(modID);
 
-    mainWindow.webContents.send("openMWConfigReady", updatedConfig);
+    mainWindow.webContents.send("openmw-config-ready", updatedConfig);
   }
 
   /**
@@ -176,14 +215,69 @@ const createWindow = () => {
     if (modsListManager == null) {
       throw new Error("Not initialized!");
     }
-    await modsListManager.saveToOpenMWConfig(modManagerConfig.openMWConfigPath);
+    let cfg = await parseOpenMWConfig();
+    cfg = await modsListManager.applyChangesToCfg(cfg);
+
+    await fsPromises.writeFile(
+      modManagerConfig.openMWConfigPath,
+      stringifyCfg(cfg)
+    );
   }
 
-  ipcMain.on("selectOpenMWConfigFile", handleSelectOpenMWConfigFile);
-  ipcMain.on("selectOpenMWLauncherFile", handleSelectOpenMWLauncherFile);
-  ipcMain.on("reorderMods", handleReorderMods);
-  ipcMain.on("toggleMod", handleToggleMod);
-  ipcMain.on("saveToOpenMWConfig", handleSaveToOpenMWConfig);
+  ipcMain.on("select-openmw-config-file", handleSelectOpenMWConfigFile);
+  ipcMain.on("reorder-mods", handleReorderMods);
+  ipcMain.on("toggle-mod", handleToggleMod);
+  ipcMain.on("update-openmw-config", handleSaveToOpenMWConfig);
+
+  ipcMain.on("sort-content", async (event, arg) => {
+    if (modsListManager == null) {
+      throw new Error("Not initialized!");
+    }
+    const cfg = await parseOpenMWConfig();
+    const rawINI = modsListManager.convertContentToGameFiles(cfg);
+
+    const iniFilePath = path.join(TEMP_DIR_PATH, TEMP_GAME_FILES_INI_FILENAME);
+    await fsPromises.writeFile(iniFilePath, rawINI);
+
+    const util = require("util");
+    const execFile = util.promisify(require("child_process").execFile);
+
+    try {
+      const { stdout, stderr } = await execFile(modManagerConfig.mloxPath, [
+        "-f",
+        iniFilePath,
+      ]);
+
+      console.log("stdout:", stdout);
+      const START_LOAD_ORDER_INDICATOR = "[New Load Order]";
+      const END_LOAD_ORDER_INDICATOR = "[END PROPOSED LOAD ORDER]";
+      const stdoutLines = stdout.split("\r\n");
+      const gameFiles = [];
+      let foundLoadOrder = false;
+
+      for (const line of stdoutLines) {
+        if (line.includes(START_LOAD_ORDER_INDICATOR)) {
+          foundLoadOrder = true;
+          continue;
+        }
+        if (line.includes(END_LOAD_ORDER_INDICATOR)) {
+          break;
+        }
+        if (foundLoadOrder) {
+          const separatorIndex = line.indexOf(" ");
+          gameFiles.push(line.substr(separatorIndex + 1));
+        }
+      }
+
+      modsListManager.updateLoadOrder(cfg, gameFiles);
+      await saveOpenMWConfig(cfg);
+
+      console.log("stderr:", stderr);
+    } catch (e) {
+      console.error(e);
+    } finally {
+    }
+  });
 
   ipcMain.on("select-dirs", async (event, arg) => {
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -203,7 +297,7 @@ const createWindow = () => {
       throw new Error("Not initialized!");
     }
     const updatedConfig = await modsListManager.removeMod(modID);
-    mainWindow.webContents.send("openMWConfigReady", updatedConfig);
+    mainWindow.webContents.send("openmw-config-ready", updatedConfig);
   }
   ipcMain.on("remove-mod", handleRemoveMod);
 
@@ -225,6 +319,7 @@ const createWindow = () => {
     handleAddDataFolders(event, dataFolderPaths);
   }
   ipcMain.on("drop-dirs", handleDropDirs);
+
   ipcMain.on("run-open-mw", async (event) => {
     console.log("run-open-mw");
     if (modManagerConfig.openMWLauncherPath == null) {
@@ -240,7 +335,7 @@ const createWindow = () => {
       const newModManagerConfig = { ...modManagerConfig };
 
       await fsPromises.writeFile(
-        PATH_TO_MOD_MANAGER_CONFIG,
+        MOD_MANAGER_CONFIG_PATH,
         JSON.stringify(newModManagerConfig, null, 2)
       );
     }
@@ -250,7 +345,13 @@ const createWindow = () => {
     const backupPath = `${modManagerConfig.openMWConfigPath}.backup`;
 
     await fsPromises.copyFile(modManagerConfig.openMWConfigPath, backupPath);
-    await modsListManager.saveToOpenMWConfig(modManagerConfig.openMWConfigPath);
+    let cfg = await parseOpenMWConfig();
+    cfg = await modsListManager.applyChangesToCfg(cfg);
+
+    await fsPromises.writeFile(
+      modManagerConfig.openMWConfigPath,
+      stringifyCfg(cfg)
+    );
     console.log({ backupPath });
 
     try {
@@ -265,15 +366,6 @@ const createWindow = () => {
       await fsPromises.copyFile(backupPath, modManagerConfig.openMWConfigPath);
       await fsPromises.unlink(backupPath);
     }
-
-    // child(result.filePaths[0], function (err, data) {
-    //   if (err) {
-    //     console.error(err);
-    //     return;
-    //   }
-
-    //   console.log(data.toString());
-    // });
   });
 };
 

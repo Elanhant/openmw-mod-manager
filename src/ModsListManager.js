@@ -1,10 +1,8 @@
-const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
-const fs = require("fs");
 const fsPromises = require("fs").promises;
-const EventEmitter = require("events");
+const { updateOrSetValuesForKey } = require("./cfg");
 
-const PATH_TO_MODS_LIST_MANAGER_CONFIG = path.join(
+const MODS_LIST_MANAGER_CONFIG_PATH = path.join(
   __dirname,
   "../mods_list_manager_config.json"
 );
@@ -15,7 +13,7 @@ const PATH_TO_MODS_LIST_MANAGER_CONFIG = path.join(
  */
 
 /** @type {ModsListManagerConfig} */
-const modsListManagerConfig = require(PATH_TO_MODS_LIST_MANAGER_CONFIG);
+const modsListManagerConfig = require(MODS_LIST_MANAGER_CONFIG_PATH);
 
 /**
  * @typedef {Object} OpenMWMod
@@ -45,7 +43,7 @@ const modsListManagerConfig = require(PATH_TO_MODS_LIST_MANAGER_CONFIG);
 /**
  * @async
  * @callback updateModsListFn
- * @param {modsListUpdater}
+ * @param {modsListUpdater} updater
  * @returns {Promise<ModsListManagerConfig>}
  */
 
@@ -65,9 +63,22 @@ const modsListManagerConfig = require(PATH_TO_MODS_LIST_MANAGER_CONFIG);
 
 /**
  * @async
- * @callback saveToOpenMWConfigFn
- * @param {string} openMWConfigPath
- * @returns {Promise<void>}
+ * @callback applyChangesToCfgFn
+ * @param {import('./cfg').CfgParsed} cfg
+ * @returns {Promise<import('./cfg').CfgParsed>}
+ */
+
+/**
+ * @callback convertContentToGameFilesFn
+ * @param {import('./cfg').CfgParsed} cfg
+ * @returns {string}
+ */
+
+/**
+ * @callback updateLoadOrderFn
+ * @param {import('./cfg').CfgParsed} cfg
+ * @param {string[]} updatedLoadOrder
+ * @returns {Promise<import('./cfg').CfgParsed>}
  */
 
 /**
@@ -76,7 +87,9 @@ const modsListManagerConfig = require(PATH_TO_MODS_LIST_MANAGER_CONFIG);
  * @property {updateModsListFn} updateModsList
  * @property {toggleModFn} toggleMod
  * @property {removeModFn} removeMod
- * @property {saveToOpenMWConfigFn} saveToOpenMWConfig
+ * @property {applyChangesToCfgFn} applyChangesToCfg
+ * @property {convertContentToGameFilesFn} convertContentToGameFiles
+ * @property {updateLoadOrderFn} updateLoadOrder
  */
 
 /**
@@ -88,13 +101,6 @@ function ModsListManager() {
   let modsConfig = {
     ...modsListManagerConfig,
   };
-
-  // async function loadFromOpenMWConfig() {
-  //   const rawOpenMWConfig = await fsPromises.readFile(openMWConfigPath, 'utf8');
-
-  //   modsConfig = parseOpenMWConfigV2(rawOpenMWConfig);
-  //   return modsConfig;
-  // }
 
   /**
    * @callback updateModsListConfigFn
@@ -115,7 +121,7 @@ function ModsListManager() {
 
   async function saveModsListConfigToFile() {
     await fsPromises.writeFile(
-      PATH_TO_MODS_LIST_MANAGER_CONFIG,
+      MODS_LIST_MANAGER_CONFIG_PATH,
       JSON.stringify(
         {
           ...modsConfig,
@@ -124,6 +130,16 @@ function ModsListManager() {
         2
       )
     );
+  }
+
+  /**
+   * @async
+   * @param {string} modPath
+   * @returns {Promise<string[]>}
+   */
+  async function collectBSAFileNames(modPath) {
+    const files = await fsPromises.readdir(modPath);
+    return files.filter((file) => file.toLowerCase().endsWith(".bsa"));
   }
 
   async function isMorrowindData(dataPath) {
@@ -137,17 +153,11 @@ function ModsListManager() {
 
   return {
     async getConfig() {
-      // if (modsConfig == null) {
-      //   await loadFromOpenMWConfig();
-      // }
       return modsConfig;
     },
-    // loadFromOpenMWConfig,
-    async updateModsList(getUpdatedModsList) {
+    async updateModsList(updater) {
       return await updateModsListConfig((currentModsConfig) => {
-        currentModsConfig.modsList = getUpdatedModsList(
-          currentModsConfig.modsList
-        );
+        currentModsConfig.modsList = updater(currentModsConfig.modsList);
         return currentModsConfig;
       });
     },
@@ -167,16 +177,21 @@ function ModsListManager() {
         return currentModsConfig;
       });
     },
-    async saveToOpenMWConfig(openMWConfigPath) {
+    convertContentToGameFiles(cfg) {
+      const contentItems = cfg.cfgConfigMap.get("content").values || new Set();
+
+      return `
+[Game Files]
+${[...contentItems].map((item, idx) => `GameFile${idx}=${item}`).join("\r\n")}`;
+    },
+    async applyChangesToCfg(cfg) {
       if (modsConfig == null) {
         throw new Error("Cannot save null mods config to OpenMW config!");
       }
-      console.log("Saving to", openMWConfigPath);
-      const rawOpenMWConfig = await fsPromises.readFile(
-        openMWConfigPath,
-        "utf8"
-      );
 
+      /**
+       * @type {Promise<{ bsaFileNames: string[], mod: OpenMWMod }>[]}
+       */
       const modPromises = modsConfig.modsList.map(
         (mod) =>
           new Promise(async (resolve) => {
@@ -191,78 +206,48 @@ function ModsListManager() {
 
       const modsInfo = await Promise.all(modPromises);
 
-      /** @type {string} */
-      const dataLines = modsInfo
-        .map(({ mod }) => {
-          const dataStr = `data="${mod.dataFolder}"`;
-          return mod.disabled ? `#${dataStr}` : dataStr;
-        })
-        // .reverse()
-        .join("\n");
+      const fallbackArchives = modsInfo
+        .map(({ bsaFileNames }) => bsaFileNames)
+        .flat();
 
-      const fallbackArchiveLines = modsInfo
-        .map(({ bsaFileNames }) =>
-          bsaFileNames.length > 0
-            ? bsaFileNames
-                .map((fileName) => `fallback-archive=${fileName}`)
-                .join("\n")
-            : null
-        )
-        .filter(Boolean)
-        .join("\n");
+      updateOrSetValuesForKey(
+        cfg,
+        "fallback",
+        (prevValues) => new Set([...prevValues, ...fallbackArchives])
+      );
 
-      let openMWConfigRaw = rawOpenMWConfig
-        .replace(
-          /((#\s*)?fallback-archive=.+(\r?\n?)?)+/,
-          "====INSERT FALLBACK ARCHIVES HERE====\r\n"
-        )
-        .replace("====INSERT FALLBACK ARCHIVES HERE====", fallbackArchiveLines)
-        .replace(/((#\s*)?data=.+(\r?\n?)?)+/, "====INSERT DATA HERE====\r\n")
-        .replace("====INSERT DATA HERE====", dataLines);
+      const dataItems = modsInfo
+        .filter(({ mod }) => !mod.disabled)
+        .map(({ mod }) => mod.dataFolder);
 
-      console.log({ dataLines });
+      updateOrSetValuesForKey(
+        cfg,
+        "data",
+        (prevValues) => new Set([...prevValues, ...dataItems])
+      );
 
-      await fsPromises.writeFile(openMWConfigPath, openMWConfigRaw);
+      return cfg;
+    },
+    async updateLoadOrder(cfg, updatedLoadOrder) {
+      if (modsConfig == null) {
+        throw new Error("Cannot save null mods config to OpenMW config!");
+      }
+
+      updateOrSetValuesForKey(
+        cfg,
+        "content",
+        (prevValues) =>
+          new Set([
+            // It is important to put updatedLoadOrder first so that
+            // .omwaddon files are at the bottom
+            ...updatedLoadOrder,
+            ...prevValues,
+          ])
+      );
+
+      return cfg;
     },
   };
 }
 
 module.exports = ModsListManager;
-
-/**
- *
- * @param {string} fileContent
- * @returns {ModsListManagerConfig}
- */
-function parseOpenMWConfigV2(fileContent) {
-  const lines = fileContent.split("\n");
-  /** @type {OpenMWMod[]} */
-  const modsList = [];
-
-  for (const line of lines) {
-    const isDisabled = line.startsWith("#");
-    const [key, value] = line.replace(/^#\s*/, "").replace(/\r/, "").split("=");
-    if (key === "data") {
-      const dataFolder = value.slice(1, -1);
-      modsList.push({
-        id: dataFolder,
-        dataFolder,
-        disabled: isDisabled,
-      });
-    }
-  }
-
-  return {
-    modsList,
-  };
-}
-
-/**
- * @async
- * @param {string} modPath
- * @returns {Promise<string[]>}
- */
-async function collectBSAFileNames(modPath) {
-  const files = await fsPromises.readdir(modPath);
-  return files.filter((file) => file.toLowerCase().endsWith(".bsa"));
-}
