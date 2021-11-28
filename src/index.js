@@ -10,394 +10,10 @@
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
 const fsPromises = require("fs").promises;
-const ModsListManager = require("./ModsListManager");
-const { parseCfg, stringifyCfg } = require("./cfg");
+const ModManager = require("./ModManager");
 const { enableAllPlugins } = require("immer");
-const util = require("util");
 
 enableAllPlugins();
-
-const TEMP_GAME_FILES_INI_FILENAME = "game_files.ini";
-
-function getModManagerConfigPath() {
-  return path.join(app.getPath("userData"), "mod_manager_config.json");
-}
-
-function getModsListManagerConfigPath() {
-  return path.join(app.getPath("userData"), "mods_list_manager_config.json");
-}
-
-/**
- *
- * @returns {Promise<boolean>}
- */
-async function doesModManagerConfigExist() {
-  return await fsPromises
-    .access(getModManagerConfigPath())
-    .then(() => true)
-    .catch(() => false);
-}
-
-/**
- *
- * @returns {Promise<ModManagerConfig>}
- */
-async function readModManagerConfig() {
-  const raw = await fsPromises.readFile(getModManagerConfigPath(), "utf-8");
-  return JSON.parse(raw);
-}
-
-/**
- * @returns {Promise<ModManagerConfig>}
- */
-async function createEmptyModManagerConfig() {
-  /** @type {ModManagerConfig} */
-  const emptyConfig = {
-    openMWConfigPath: "",
-    openMWLauncherPath: "",
-    mloxPath: "",
-  };
-
-  await fsPromises.writeFile(
-    getModManagerConfigPath(),
-    JSON.stringify(emptyConfig, null, 2),
-    "utf-8"
-  );
-
-  return emptyConfig;
-}
-
-/**
- *
- * @returns {Promise<ModManagerConfig>}
- */
-async function getModManagerConfig() {
-  if (!(await doesModManagerConfigExist())) {
-    return await createEmptyModManagerConfig();
-  }
-
-  return readModManagerConfig();
-}
-
-/**
- * @param {ModManagerConfig} config
- * @returns {Promise<void>}
- */
-async function saveModManagerConfig(config) {
-  await fsPromises.writeFile(
-    getModManagerConfigPath(),
-    JSON.stringify(config, null, 2),
-    "utf-8"
-  );
-}
-
-/**
- * @typedef {Object} ModManagerConfig
- * @property {string} openMWConfigPath
- * @property {string} openMWLauncherPath
- * @property {string} mloxPath
- */
-
-/**
- * @async
- * @callback requestOpenMWConfigPath
- * @returns {Promise<string>}
- */
-
-/**
- * @async
- * @callback requestMloxPath
- * @returns {Promise<string>}
- */
-
-/**
- *
- * @typedef {Object} ModManagerOptions
- * @property {requestOpenMWConfigPath} requestOpenMWConfigPath
- * @property {requestMloxPath} requestMloxPath
- * @property {function(string):void} logMessage
- */
-
-/**
- *
- * @param {ModManagerOptions} options
- */
-function ModManager({ requestOpenMWConfigPath, requestMloxPath, logMessage }) {
-  /** @type {ModManagerConfig | null} */
-  let modManagerConfig = null;
-  /** @type {import('./ModsListManager').ModsListManager | null} */
-  let modsListManager = null;
-
-  /**
-   *
-   * @param {string} newPath
-   */
-  async function updateOpenMWConfigPath(newPath) {
-    if (modManagerConfig == null) {
-      throw new Error("modManagerConfig is not initialized!");
-    }
-    modManagerConfig.openMWConfigPath = newPath;
-    await saveModManagerConfig(modManagerConfig);
-  }
-  /**
-   *
-   * @param {string} newPath
-   */
-  async function updateMloxPath(newPath) {
-    if (modManagerConfig == null) {
-      throw new Error("modManagerConfig is not initialized!");
-    }
-    modManagerConfig.mloxPath = newPath;
-    await saveModManagerConfig(modManagerConfig);
-  }
-
-  /**
-   * @returns {Promise<string>}
-   */
-  async function getOpenMWConfigPath() {
-    if (modManagerConfig == null) {
-      throw new Error("modManagerConfig is not initialized!");
-    }
-
-    const { openMWConfigPath } = modManagerConfig;
-
-    let configPath;
-
-    try {
-      await fsPromises.access(openMWConfigPath);
-      configPath = openMWConfigPath;
-    } catch (e) {
-      configPath = await requestOpenMWConfigPath();
-      await updateOpenMWConfigPath(configPath);
-    }
-
-    return configPath;
-  }
-
-  /**
-   * @async
-   * @returns {Promise<import('./cfg').CfgParsed>}
-   */
-  async function parseOpenMWConfig() {
-    if (modManagerConfig == null) {
-      throw new Error("modManagerConfig is not initialized!");
-    }
-
-    const configPath = await getOpenMWConfigPath();
-
-    const rawOpenMWConfig = await fsPromises.readFile(configPath, "utf-8");
-
-    return parseCfg(rawOpenMWConfig);
-  }
-
-  /**
-   * @async
-   * @param {import('./cfg').CfgParsed} cfg
-   * @returns {Promise<void>}
-   */
-  async function saveOpenMWConfig(cfg) {
-    if (modManagerConfig == null) {
-      throw new Error("modManagerConfig is not initialized!");
-    }
-
-    const configPath = await getOpenMWConfigPath();
-
-    await fsPromises.writeFile(configPath, stringifyCfg(cfg));
-  }
-
-  /**
-   * @returns {Promise<string>}
-   */
-  async function getMloxExecutablePath() {
-    if (modManagerConfig == null) {
-      throw new Error("modManagerConfig is not initialized!");
-    }
-
-    const { mloxPath } = modManagerConfig;
-
-    let executablePath;
-
-    try {
-      await fsPromises.access(mloxPath);
-      executablePath = mloxPath;
-    } catch (e) {
-      executablePath = await requestMloxPath();
-      await updateMloxPath(executablePath);
-    }
-
-    return executablePath;
-  }
-
-  /**
-   *
-   * @param {string} mloxOutput
-   * @returns {string[]}
-   */
-  function parseMloxOutput(mloxOutput) {
-    const START_LOAD_ORDER_INDICATOR = "[New Load Order]";
-    const END_LOAD_ORDER_INDICATOR = "[END PROPOSED LOAD ORDER]";
-
-    const stdoutLines = mloxOutput.split("\r\n");
-    const gameFiles = [];
-    let foundLoadOrder = false;
-
-    for (const line of stdoutLines) {
-      if (line.includes(START_LOAD_ORDER_INDICATOR)) {
-        foundLoadOrder = true;
-        continue;
-      }
-      if (line.includes(END_LOAD_ORDER_INDICATOR)) {
-        break;
-      }
-      if (foundLoadOrder) {
-        const separatorIndex = line.indexOf(" ");
-        gameFiles.push(line.substr(separatorIndex + 1));
-      }
-    }
-
-    return gameFiles;
-  }
-
-  return {
-    async init() {
-      modManagerConfig = await getModManagerConfig();
-      modsListManager = ModsListManager({
-        configPath: getModsListManagerConfigPath(),
-      });
-      const openMWConfig = await parseOpenMWConfig();
-      await modsListManager.init(openMWConfig);
-    },
-    /**
-     * @typedef {Object} ModManagerDataForUI
-     * @property {import('./ModsListManager').OpenMWData[]} data
-     * @property {import('./ModsListManager').OpenMWContent[]} content
-     */
-    /**
-     * @returns {Promise<ModManagerDataForUI>}
-     */
-    async getDataForUI() {
-      const [config, content] = await Promise.all([
-        modsListManager.getConfig(),
-        modsListManager.getContent(),
-      ]);
-
-      return {
-        data: config.data,
-        content,
-      };
-    },
-    /**
-     *
-     * @param {import('./ModsListManager').changeEventCallback} callback
-     * @returns {function():void}
-     */
-    addModsChangeEventListener(callback) {
-      return modsListManager.addListener("change", callback);
-    },
-    /**
-     *
-     * @param {string[]} dataFolderPaths
-     */
-    async addData(dataFolderPaths) {
-      if (modsListManager == null) {
-        throw new Error("modsListManager is not initialized!");
-      }
-      logMessage(`Adding ${dataFolderPaths.length} mods...`);
-      await modsListManager.addData(dataFolderPaths);
-      logMessage(`Successfully added ${dataFolderPaths.length} mods`);
-    },
-    /**
-     *
-     * @param {import('./ModsListManager').OpenMWData[]} data
-     */
-    async reorderData(data) {
-      if (modsListManager == null) {
-        throw new Error("modsListManager is not initialized!");
-      }
-
-      await modsListManager.changeDataOrder(data);
-    },
-    /**
-     *
-     * @param {string} dataID
-     */
-    async toggleData(dataID) {
-      if (modsListManager == null) {
-        throw new Error("modsListManager is not initialized!");
-      }
-
-      await modsListManager.toggleData(dataID);
-      logMessage(`Successfully toggled ${dataID}`);
-    },
-    /**
-     *
-     * @param {string} dataID
-     */
-    async removeData(dataID) {
-      if (modsListManager == null) {
-        throw new Error("modsListManager is not initialized!");
-      }
-
-      logMessage(`Removing ${dataID}...`);
-      await modsListManager.removeData(dataID);
-      logMessage(`Successfully removed ${dataID}`);
-    },
-    /**
-     * @returns {Promise<void>}
-     */
-    async sortContent() {
-      if (modsListManager == null) {
-        throw new Error("modsListManager is not initialized!");
-      }
-
-      logMessage(`Exporting content to mlox-compatible format...`);
-      const rawINI = modsListManager.convertContentToGameFiles();
-
-      const iniFilePath = path.join(
-        app.getPath("temp"),
-        TEMP_GAME_FILES_INI_FILENAME
-      );
-      await fsPromises.writeFile(iniFilePath, rawINI);
-
-      logMessage(`Running mlox...`);
-      const execFile = util.promisify(require("child_process").execFile);
-      const mloxExecutablePath = await getMloxExecutablePath();
-      const { stdout, stderr } = await execFile(mloxExecutablePath, [
-        "-f",
-        iniFilePath,
-      ]);
-
-      console.log("stdout:", stdout);
-
-      logMessage(`Parsing mlox output...`);
-      const gameFiles = parseMloxOutput(stdout);
-      await modsListManager.changeContentOrder(gameFiles);
-
-      logMessage(`Updating content order...`);
-      const cfg = await parseOpenMWConfig();
-      const updatedCfg = await modsListManager.applyChangesToCfg(cfg);
-
-      logMessage(`Saving content order to OpenMW config...`);
-      await saveOpenMWConfig(updatedCfg);
-      logMessage(`Successfully updated content order`);
-
-      console.log("stderr:", stderr);
-    },
-    async updateOpenMWConfig() {
-      if (modsListManager == null) {
-        throw new Error("modsListManager is not initialized!");
-      }
-
-      logMessage(`Saving to OpenMW config...`);
-      let cfg = await parseOpenMWConfig();
-      cfg = await modsListManager.applyChangesToCfg(cfg);
-
-      await saveOpenMWConfig(cfg);
-      logMessage(`Successfully saved to OpenMW config`);
-    },
-    updateOpenMWConfigPath,
-  };
-}
 
 // Live Reload
 require("electron-reload")(__dirname, {
@@ -413,6 +29,15 @@ if (require("electron-squirrel-startup")) {
 
 const createWindow = async () => {
   const modManager = ModManager({
+    modManagerConfigPath: path.join(
+      app.getPath("userData"),
+      "mod_manager_config.json"
+    ),
+    modsListManagerConfigPath: path.join(
+      app.getPath("userData"),
+      "mods_list_manager_config.json"
+    ),
+    tempDirPath: app.getPath("temp"),
     requestOpenMWConfigPath: async () => {
       const { response: buttonIndex } = await dialog.showMessageBox(
         mainWindow,
@@ -512,10 +137,10 @@ const createWindow = async () => {
   /**
    *
    * @param {Electron.IpcMainEvent} event
-   * @param {import('./ModsListManager').OpenMWData[]} modList
+   * @param {import('./ModsListManager').OpenMWData[]} data
    */
-  async function handleReorderData(event, modList) {
-    await modManager.reorderData(modList);
+  async function handleReorderData(event, data) {
+    await modManager.reorderData(data);
   }
   ipcMain.on("reorder-data", handleReorderData);
 
@@ -534,6 +159,16 @@ const createWindow = async () => {
   ipcMain.on("update-openmw-config", async () => {
     await modManager.updateOpenMWConfig();
   });
+
+  /**
+   *
+   * @param {Electron.IpcMainEvent} event
+   * @param {import('./ModsListManager').OpenMWContent[]} content
+   */
+  async function handleReorderContent(event, content) {
+    await modManager.reorderContent(content);
+  }
+  ipcMain.on("reorder-content", handleReorderContent);
 
   ipcMain.on("sort-content", async (event, arg) => {
     await modManager.sortContent();

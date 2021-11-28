@@ -113,6 +113,12 @@ const { updateOrSetValuesForKey } = require("./cfg");
  */
 
 /**
+ * @callback applyContentOrderFromMloxFn
+ * @param {string[]} updatedLoadOrder
+ * @returns {Promise<void>}
+ */
+
+/**
  * @typedef {Object} ModsListManager
  * @property {initFn} init
  * @property {changeEventListener} addListener
@@ -125,6 +131,7 @@ const { updateOrSetValuesForKey } = require("./cfg");
  * @property {applyChangesToCfgFn} applyChangesToCfg
  * @property {convertContentToGameFilesFn} convertContentToGameFiles
  * @property {changeContentOrderFn} changeContentOrder
+ * @property {applyContentOrderFromMloxFn} applyContentOrderFromMlox
  */
 
 /**
@@ -516,6 +523,13 @@ ${[...currentState.content]
       });
     },
     async changeContentOrder(updatedLoadOrder) {
+      const nextState = produce(currentState, (draft) => {
+        draft.content = new Set(updatedLoadOrder);
+      });
+
+      await applyStateChanges(nextState);
+    },
+    async applyContentOrderFromMlox(updatedLoadOrder) {
       const nextState = produce(currentState, (draft) => {
         draft.content = new Set([
           // It is important to put updatedLoadOrder first so that

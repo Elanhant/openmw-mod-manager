@@ -60,6 +60,13 @@
     dataItems = e.detail.items;
     ipcRenderer.send("reorder-data", dataItems);
   }
+  function handleDndConsiderContent(e) {
+    // contentItems = e.detail.items;
+  }
+  function handleDndFinalizeContent(e) {
+    // contentItems = e.detail.items;
+    // ipcRenderer.send("reorder-content", contentItems);
+  }
 
   /**
    *
@@ -148,7 +155,7 @@
     <section class="dataSection">
       <div
         class="dataList"
-        use:dndzone={{ items: dataItems, flipDurationMs }}
+        use:dndzone={{ items: dataItems, flipDurationMs, type: "data" }}
         on:consider={handleDndConsiderData}
         on:finalize={handleDndFinalizeData}
       >
@@ -188,14 +195,23 @@
     </div>
     <section class="contentSection">
       {#if ready}
-        <div class="contentItemList">
+        <div
+          class="contentItemList"
+          use:dndzone={{ items: contentItems, flipDurationMs, type: "content" }}
+          on:consider={handleDndConsiderContent}
+          on:finalize={handleDndFinalizeContent}
+        >
           {#each contentItems as contentItem (contentItem.id)}
-            <div class="contentItem">
+            <div
+              class="contentItem"
+              animate:flip={{ duration: flipDurationMs }}
+            >
               <div>
                 <input
                   type="checkbox"
                   name={`enableContent_${contentItem.id}`}
                   checked={!contentItem.disabled}
+                  disabled
                 />
               </div>
               <div>
