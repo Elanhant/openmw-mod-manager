@@ -1,64 +1,97 @@
 const path = require("path");
 const fsPromises = require("fs").promises;
+const { produce } = require("immer");
 const { updateOrSetValuesForKey } = require("./cfg");
-
-const MODS_LIST_MANAGER_CONFIG_PATH = path.join(
-  __dirname,
-  "../mods_list_manager_config.json"
-);
 
 /**
  * @typedef {Object} ModsListManagerConfig
- * @property {OpenMWMod[]} modsList
+ * @property {OpenMWData[]} data
+ * @property {string[]} content
  */
 
-/** @type {ModsListManagerConfig} */
-const modsListManagerConfig = require(MODS_LIST_MANAGER_CONFIG_PATH);
+/**
+ * @typedef {Object} ModsListManagerState
+ * @property {OpenMWData[]} data
+ * @property {Set<string>} content
+ */
 
 /**
- * @typedef {Object} OpenMWMod
+ * @typedef {Object} OpenMWData
  * @property {string} id
+ * @property {string} name
  * @property {string} dataFolder
  * @property {boolean} disabled
  */
 
 /**
- * @typedef {Object} ModsList
- * @property {OpenMWMod[]} modsList
+ * @typedef {Object} OpenMWContent
+ * @property {string} id
+ * @property {string} dataID
+ * @property {string} name
+ * @property {boolean} disabled
+ */
+
+/**
+ * @typedef {"change"} ModsListEvent
+ */
+
+/**
+ * @callback changeEventCallback
+ * @param {ModsListManagerState} currentState
+ * @returns {void}
+ */
+
+/**
+ * @callback changeEventListener
+ * @param {"change"} eventName
+ * @param {changeEventCallback} callback
+ * @returns {function():void}
  */
 
 /**
  * @async
  * @callback getConfigFn
- * @returns {Promise<ModsListManagerConfig>}
- */
-
-/**
- *
- * @callback modsListUpdater
- * @param {OpenMWMod[]} mods - current mods list
- * @returns {OpenMWMod[]} - updated mods list
+ * @returns {Promise<ModsListManagerState>}
  */
 
 /**
  * @async
- * @callback updateModsListFn
- * @param {modsListUpdater} updater
- * @returns {Promise<ModsListManagerConfig>}
+ * @callback getContentFn
+ * @returns {Promise<OpenMWContent[]>}
  */
 
 /**
  * @async
- * @callback toggleModFn
+ * @callback initFn
+ * @param {import('./cfg').CfgParsed} cfg
+ * @returns {Promise<void>}
+ */
+
+/**
+ * @async
+ * @callback addDataFn
+ * @param {string[]} dataFolderPaths
+ * @returns {Promise<void>}
+ */
+
+/**
+ * @async
+ * @callback toggleDataFn
  * @param {string} modID
- * @returns {Promise<ModsListManagerConfig>}
+ * @returns {Promise<void>}
  */
 
 /**
  * @async
- * @callback removeModFn
+ * @callback removeDataFn
  * @param {string} modID
- * @returns {Promise<ModsListManagerConfig>}
+ * @returns {Promise<void>}
+
+/**
+ * @async
+ * @callback changeDataOrderFn
+ * @param {OpenMWData[]} updatedData
+ * @returns {Promise<void>}
  */
 
 /**
@@ -70,75 +103,163 @@ const modsListManagerConfig = require(MODS_LIST_MANAGER_CONFIG_PATH);
 
 /**
  * @callback convertContentToGameFilesFn
- * @param {import('./cfg').CfgParsed} cfg
  * @returns {string}
  */
 
 /**
- * @callback updateLoadOrderFn
- * @param {import('./cfg').CfgParsed} cfg
+ * @callback changeContentOrderFn
  * @param {string[]} updatedLoadOrder
- * @returns {Promise<import('./cfg').CfgParsed>}
+ * @returns {Promise<void>}
  */
 
 /**
  * @typedef {Object} ModsListManager
+ * @property {initFn} init
+ * @property {changeEventListener} addListener
  * @property {getConfigFn} getConfig
- * @property {updateModsListFn} updateModsList
- * @property {toggleModFn} toggleMod
- * @property {removeModFn} removeMod
+ * @property {getContentFn} getContent
+ * @property {addDataFn} addData
+ * @property {toggleDataFn} toggleData
+ * @property {removeDataFn} removeData
+ * @property {changeDataOrderFn} changeDataOrder
  * @property {applyChangesToCfgFn} applyChangesToCfg
  * @property {convertContentToGameFilesFn} convertContentToGameFiles
- * @property {updateLoadOrderFn} updateLoadOrder
+ * @property {changeContentOrderFn} changeContentOrder
+ */
+
+/**
+ * @typedef {Object} ModsListManagerOptions
+ * @property {string} configPath
  */
 
 /**
  *
+ * @param {ModsListManagerOptions} options
  * @returns {ModsListManager}
  */
-function ModsListManager() {
-  /** @type {ModsListManagerConfig}  */
-  let modsConfig = {
-    ...modsListManagerConfig,
+function ModsListManager({ configPath }) {
+  /** @type {ModsListManagerState | null}  */
+  let currentState = null;
+
+  /**
+   *
+   * @returns {Promise<boolean>}
+   */
+  async function doesModsListManagerConfigExist() {
+    return await fsPromises
+      .access(configPath)
+      .then(() => true)
+      .catch(() => false);
+  }
+
+  /**
+   *
+   * @returns {Promise<ModsListManagerConfig>}
+   */
+  async function readModsListManagerConfig() {
+    const raw = await fsPromises.readFile(configPath, "utf-8");
+    return JSON.parse(raw);
+  }
+
+  /**
+   * @returns {Promise<ModsListManagerConfig>}
+   */
+  async function createEmptyModsListManagerConfig() {
+    /** @type {ModsListManagerConfig} */
+    const emptyConfig = {
+      data: [],
+      content: [],
+    };
+
+    await fsPromises.writeFile(
+      configPath,
+      JSON.stringify(emptyConfig, null, 2),
+      "utf-8"
+    );
+
+    return emptyConfig;
+  }
+
+  /**
+   *
+   * @param {ModsListManagerConfig} config
+   * @returns {ModsListManagerState}
+   */
+  function configToState(config) {
+    return {
+      data: config.data,
+      content: new Set(config.content),
+    };
+  }
+
+  /**
+   *
+   * @param {ModsListManagerState} state
+   * @returns {ModsListManagerConfig}
+   */
+  function stateToConfig(state) {
+    return {
+      data: state.data,
+      content: [...state.content],
+    };
+  }
+
+  /**
+   *
+   * @returns {Promise<ModsListManagerState>}
+   */
+  async function initializeModsListManagerState() {
+    let config;
+    if (!(await doesModsListManagerConfigExist())) {
+      config = await createEmptyModsListManagerConfig();
+    } else {
+      config = await readModsListManagerConfig();
+    }
+
+    return configToState(config);
+  }
+
+  /**
+   * @typedef {Object} ModsListListeners
+   * @property {changeEventCallback[]} change
+   */
+
+  /**
+   * @type {ModsListListeners}
+   */
+  let listeners = {
+    change: [],
   };
 
   /**
-   * @callback updateModsListConfigFn
-   * @param {ModsListManagerConfig} current config
-   * @returns {ModsListManagerConfig}
-   */
-
-  /**
    * @async
-   * @param {updateModsListConfigFn} updater
-   * @returns {Promise<ModsListManagerConfig>}
+   * @param {ModsListManagerState} nextState
+   * @returns {Promise<void>}
    */
-  async function updateModsListConfig(updater) {
-    modsConfig = updater(modsConfig);
+  async function applyStateChanges(nextState) {
+    if (nextState !== currentState) {
+      currentState = nextState;
+      for (const changeListener of listeners.change) {
+        changeListener(currentState);
+      }
+    }
     await saveModsListConfigToFile();
-    return modsConfig;
   }
 
   async function saveModsListConfigToFile() {
     await fsPromises.writeFile(
-      MODS_LIST_MANAGER_CONFIG_PATH,
-      JSON.stringify(
-        {
-          ...modsConfig,
-        },
-        null,
-        2
-      )
+      configPath,
+      JSON.stringify(stateToConfig(currentState), null, 2)
     );
   }
 
   /**
    * @async
-   * @param {string} modPath
+   * @param {string} dataFolderPath
    * @returns {Promise<string[]>}
    */
-  async function collectBSAFileNames(modPath) {
-    const files = await fsPromises.readdir(modPath);
+  async function collectBSAFileNames(dataFolderPath) {
+    const files = await fsPromises.readdir(dataFolderPath);
     return files.filter((file) => file.toLowerCase().endsWith(".bsa"));
   }
 
@@ -151,101 +272,260 @@ function ModsListManager() {
     }
   }
 
-  return {
-    async getConfig() {
-      return modsConfig;
-    },
-    async updateModsList(updater) {
-      return await updateModsListConfig((currentModsConfig) => {
-        currentModsConfig.modsList = updater(currentModsConfig.modsList);
-        return currentModsConfig;
-      });
-    },
-    async toggleMod(modID) {
-      return await updateModsListConfig((currentModsConfig) => {
-        currentModsConfig.modsList = currentModsConfig.modsList.map((mod) =>
-          mod.id === modID ? { ...mod, disabled: !mod.disabled } : mod
-        );
-        return currentModsConfig;
-      });
-    },
-    async removeMod(modID) {
-      return await updateModsListConfig((currentModsConfig) => {
-        currentModsConfig.modsList = currentModsConfig.modsList.filter(
-          (mod) => mod.id !== modID
-        );
-        return currentModsConfig;
-      });
-    },
-    convertContentToGameFiles(cfg) {
-      const contentItems = cfg.cfgConfigMap.get("content").values || new Set();
+  /**
+   *
+   * @param {string} dataFolder
+   * @returns {string}
+   */
+  function getModName(dataFolder) {
+    const parts = dataFolder.split(/[/\\]/);
+    let modName = parts.pop();
+    if (/^\d\d/.test(modName)) {
+      const variantName = modName;
+      modName = parts.pop();
+      return `${modName} [${variantName}]`;
+    }
+    return modName;
+  }
 
+  const CONTENT_FILE_REGEX = /\.(esp|esm|omwaddon)$/i;
+
+  /**
+   *
+   * @returns {Promise<OpenMWContent[]>}
+   */
+  async function getContent() {
+    /** @type {Map<string, OpenMWContent>} */
+    const contentFilesMap = new Map();
+
+    /**
+     * @type {Promise<OpenMWContent[]>[]}
+     */
+    const dataPromises = currentState.data
+      .filter((dataItem) => !dataItem.disabled)
+      .map(
+        (dataItem) =>
+          new Promise(async (resolve) => {
+            const files = await fsPromises.readdir(dataItem.dataFolder);
+
+            resolve(
+              files
+                .filter((fileName) => CONTENT_FILE_REGEX.test(fileName))
+                .map((fileName) => {
+                  return {
+                    id: fileName,
+                    dataID: dataItem.id,
+                    name: fileName,
+                    disabled: !currentState.content.has(fileName),
+                  };
+                })
+            );
+          })
+      );
+    const allContentFiles = (await Promise.all(dataPromises)).flat();
+
+    // We need to go through each content again to make sure that
+    // the content from the latest data folders overrides the same content
+    // from the previous folders
+    for (const content of allContentFiles) {
+      contentFilesMap.set(content.id, content);
+    }
+
+    const sortOrderEntries = [...currentState.content].reduce(
+      (memo, content, idx) => ({ ...memo, [content]: idx }),
+      {}
+    );
+
+    return [...contentFilesMap.values()]
+      .filter((content) => !content.disabled)
+      .sort(
+        (contentA, contentB) =>
+          sortOrderEntries[contentA.id] - sortOrderEntries[contentB.id]
+      )
+      .concat(
+        [...contentFilesMap.values()].filter((content) => content.disabled)
+      );
+  }
+
+  /** @type {addDataFn} */
+  async function addData(dataFolderPaths) {
+    const nextState = produce(currentState, (draft) => {
+      draft.data = [
+        ...draft.data,
+        ...dataFolderPaths
+          .filter(
+            (dataFolderPath) =>
+              !draft.data.some(
+                (currentMod) => currentMod.dataFolder === dataFolderPath
+              )
+          )
+          .map((dataFolder) => ({
+            id: dataFolder,
+            dataFolder,
+            name: getModName(dataFolder),
+            disabled: false,
+          })),
+      ];
+    });
+
+    await applyStateChanges(nextState);
+  }
+
+  return {
+    async init(cfg) {
+      currentState = await initializeModsListManagerState();
+      if (currentState.data.length === 0) {
+        const dataFromCfg = cfg.cfgConfigMap.get("data").values || new Set();
+        await addData([...dataFromCfg]);
+
+        const contentFromCfg =
+          cfg.cfgConfigMap.get("content").values || new Set();
+        currentState.content = contentFromCfg;
+      }
+    },
+    addListener(eventName, callback) {
+      listeners[eventName].push(callback);
+
+      return () => {
+        listeners[eventName] = listeners[eventName].filter(
+          (listener) => listener !== callback
+        );
+      };
+    },
+    async getConfig() {
+      return currentState;
+    },
+    getContent,
+    async changeDataOrder(nextData) {
+      const nextState = produce(currentState, (draft) => {
+        draft.data = nextData;
+      });
+
+      await applyStateChanges(nextState);
+    },
+    addData,
+    async toggleData(dataItemID) {
+      const nextState = await produce(currentState, async (draft) => {
+        const dataItemIndex = draft.data.findIndex(
+          (dataItem) => dataItem.id === dataItemID
+        );
+        const dataItem = draft.data[dataItemIndex];
+        const dataContentFiles = (
+          await fsPromises.readdir(dataItem.dataFolder)
+        ).filter((fileName) => CONTENT_FILE_REGEX.test(fileName));
+
+        draft.data[dataItemIndex].disabled =
+          !draft.data[dataItemIndex].disabled;
+
+        let newContent = [...draft.content];
+        if (draft.data[dataItemIndex].disabled) {
+          newContent = newContent.filter(
+            (contentFile) => !dataContentFiles.includes(contentFile)
+          );
+        } else {
+          newContent.push(...dataContentFiles);
+        }
+        draft.content = new Set(newContent);
+      });
+
+      await applyStateChanges(nextState);
+    },
+    async removeData(dataItemID) {
+      const nextState = produce(currentState, (draft) => {
+        draft.data = draft.data.filter(
+          (dataItem) => dataItem.id !== dataItemID
+        );
+      });
+
+      await applyStateChanges(nextState);
+    },
+    convertContentToGameFiles() {
       return `
 [Game Files]
-${[...contentItems].map((item, idx) => `GameFile${idx}=${item}`).join("\r\n")}`;
+${[...currentState.content]
+  .map((item, idx) => `GameFile${idx}=${item}`)
+  .join("\r\n")}`;
     },
     async applyChangesToCfg(cfg) {
-      if (modsConfig == null) {
-        throw new Error("Cannot save null mods config to OpenMW config!");
+      if (currentState == null) {
+        throw new Error("No state to apply to OpenMW config!");
       }
 
       /**
-       * @type {Promise<{ bsaFileNames: string[], mod: OpenMWMod }>[]}
+       * @type {Promise<{ bsaFileNames: string[], data: OpenMWData }>[]}
        */
-      const modPromises = modsConfig.modsList.map(
-        (mod) =>
+      const dataPromises = currentState.data.map(
+        (dataItem) =>
           new Promise(async (resolve) => {
-            const bsaFileNames = await collectBSAFileNames(mod.dataFolder);
+            const bsaFileNames = await collectBSAFileNames(dataItem.dataFolder);
 
             resolve({
               bsaFileNames,
-              mod,
+              data: dataItem,
             });
           })
       );
 
-      const modsInfo = await Promise.all(modPromises);
+      const dataInfo = await Promise.all(dataPromises);
 
-      const fallbackArchives = modsInfo
-        .map(({ bsaFileNames }) => bsaFileNames)
+      const fallbackArchives = dataInfo
+        .map(({ bsaFileNames, data }) =>
+          bsaFileNames.map((fileName) => ({
+            fileName,
+            disabled: data.disabled,
+          }))
+        )
         .flat();
 
-      updateOrSetValuesForKey(
-        cfg,
-        "fallback",
-        (prevValues) => new Set([...prevValues, ...fallbackArchives])
-      );
+      const dataItems = dataInfo.map(({ data }) => data);
 
-      const dataItems = modsInfo
-        .filter(({ mod }) => !mod.disabled)
-        .map(({ mod }) => mod.dataFolder);
+      return produce(cfg, (draft) => {
+        updateOrSetValuesForKey(draft, "fallback", (prevValues) => {
+          const nextValues = new Set(prevValues);
+          for (const fallbackItem of fallbackArchives) {
+            if (fallbackItem.disabled) {
+              if (prevValues.has(fallbackItem.fileName)) {
+                nextValues.delete(fallbackItem.fileName);
+              }
+              continue;
+            }
+            nextValues.add(fallbackItem.fileName);
+          }
+          return nextValues;
+        });
 
-      updateOrSetValuesForKey(
-        cfg,
-        "data",
-        (prevValues) => new Set([...prevValues, ...dataItems])
-      );
+        updateOrSetValuesForKey(draft, "data", (prevValues) => {
+          const nextValues = new Set(prevValues);
+          for (const dataItem of dataItems) {
+            if (dataItem.disabled) {
+              if (prevValues.has(dataItem.dataFolder)) {
+                nextValues.delete(dataItem.dataFolder);
+              }
+              continue;
+            }
+            nextValues.add(dataItem.dataFolder);
+          }
+          return nextValues;
+        });
 
-      return cfg;
+        updateOrSetValuesForKey(
+          draft,
+          "content",
+          () => new Set(currentState.content)
+        );
+      });
     },
-    async updateLoadOrder(cfg, updatedLoadOrder) {
-      if (modsConfig == null) {
-        throw new Error("Cannot save null mods config to OpenMW config!");
-      }
+    async changeContentOrder(updatedLoadOrder) {
+      const nextState = produce(currentState, (draft) => {
+        draft.content = new Set([
+          // It is important to put updatedLoadOrder first so that
+          // .omwaddon files are at the bottom
+          ...updatedLoadOrder,
+          ...draft.content,
+        ]);
+      });
 
-      updateOrSetValuesForKey(
-        cfg,
-        "content",
-        (prevValues) =>
-          new Set([
-            // It is important to put updatedLoadOrder first so that
-            // .omwaddon files are at the bottom
-            ...updatedLoadOrder,
-            ...prevValues,
-          ])
-      );
-
-      return cfg;
+      await applyStateChanges(nextState);
     },
   };
 }

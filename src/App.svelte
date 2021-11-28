@@ -1,4 +1,5 @@
 <script>
+  import { afterUpdate } from "svelte";
   import { flip } from "svelte/animate";
   import { dndzone } from "svelte-dnd-action";
   /** @type {Electron} */
@@ -7,67 +8,85 @@
   const { ipcRenderer, remote } = electron;
   const { Menu, MenuItem } = remote;
 
-  let menuModToRemoveID = null;
+  let menuDataToRemoveID = null;
 
-  const modMenuItem = new Menu();
+  const dataItemMenu = new Menu();
 
-  const menuItem = new MenuItem({
+  const dataItemMenuItemRemove = new MenuItem({
     label: "Remove mod...",
     click: () => {
       if (window.confirm("Are you sure you want to remove this mod?")) {
-        ipcRenderer.send("remove-mod", menuModToRemoveID);
+        ipcRenderer.send("remove-data", menuDataToRemoveID);
       }
     },
   });
-  modMenuItem.append(menuItem);
+  dataItemMenu.append(dataItemMenuItemRemove);
 
-  export let name;
+  let ready = false;
 
-  $: modManagerConfig = null;
+  /** @type {string[]} */
+  let logMessages = [];
+
+  /** @type {HTMLDivElement} */
+  let logMessagesContainer;
+
+  afterUpdate(() => {
+    if (logMessagesContainer) {
+      logMessagesContainer.scrollTo(0, logMessagesContainer.scrollHeight);
+    }
+  });
+
   /**
-   * @type {import('./index.js').OpenMWModsConfig}
+   * @type {import('./ModsListManager.js').OpenMWData[]}
    */
-  $: openMWConfig = null;
+  let dataItems = [];
+  /**
+   * @type {Map<string, string>}
+   */
+  $: dataNames = new Map(
+    dataItems.map((dataEntry) => [dataEntry.id, dataEntry.name])
+  );
 
   /**
-   * @type {import('./index.js').OpenMWMod[]}
+   * @type {import('./ModsListManager.js').OpenMWContent[]}
    */
-  $: currentMods = openMWConfig != null ? openMWConfig.modsList : [];
+  let contentItems = [];
 
   const flipDurationMs = 300;
-  function handleDndConsider(e) {
-    currentMods = e.detail.items;
+  function handleDndConsiderData(e) {
+    dataItems = e.detail.items;
   }
-  function handleDndFinalize(e) {
-    currentMods = e.detail.items;
-    ipcRenderer.send("reorder-mods", currentMods);
+  function handleDndFinalizeData(e) {
+    dataItems = e.detail.items;
+    ipcRenderer.send("reorder-data", dataItems);
   }
 
   /**
    *
-   * @param {string} modID
+   * @param {string} dataID
    */
-  function handleToggleMod(modID) {
-    ipcRenderer.send("toggle-mod", modID);
+  function handleToggleData(dataID) {
+    ipcRenderer.send("toggle-data", dataID);
   }
 
   function handleSaveToOpenMWConfig() {
     ipcRenderer.send("update-openmw-config");
   }
 
-  ipcRenderer.on("configReady", (event, config) => {
-    console.log(config);
-    modManagerConfig = config;
-  });
-
-  ipcRenderer.on("openmw-config-ready", (event, config) => {
-    console.log(config);
-    openMWConfig = config;
+  ipcRenderer.on("mod-manager-ready", (event, { data, content }) => {
+    dataItems = data;
+    contentItems = content;
+    ready = true;
+    console.log({ dataItems, contentItems });
   });
 
   ipcRenderer.on("select-openmw-config-file", (event, config) => {
     console.log("select-openmw-config-file", config);
-    openMWConfig = config;
+  });
+
+  ipcRenderer.on("log-message", (event, message) => {
+    console.log(event, message);
+    logMessages = logMessages.concat([message]);
   });
 
   function selectOpenMWConfig(event) {
@@ -83,41 +102,18 @@
     });
   }
 
-  function handleRunOpenMW(event) {
-    event.preventDefault();
-    console.log("handleRunOpenMW");
-    window.postMessage({
-      type: "run-open-mw",
-    });
-  }
-
   function handleSortContent(event) {
     event.preventDefault();
-    console.log("handleSortContent");
     ipcRenderer.send("sort-content");
-    // window.postMessage({
-    //   type: "sort-content",
-    // });
-  }
-
-  function getModName(mod) {
-    const parts = mod.dataFolder.split(/[/\\]/);
-    let modName = parts.pop();
-    if (/^\d\d/.test(modName)) {
-      const variantName = modName;
-      modName = parts.pop();
-      return `${modName} [${variantName}]`;
-    }
-    return modName;
   }
 
   /**
    *
    * @param {File[]} files
    */
-  function addBulkMods(files) {
+  function addBulkData(files) {
     ipcRenderer.send(
-      "drop-dirs",
+      "drop-data-dirs",
       files.map((file) => file.path)
     );
   }
@@ -130,20 +126,12 @@
   on:drop={(e) => {
     e.preventDefault();
     e.stopPropagation();
-    addBulkMods([...e.dataTransfer.items].map((item) => item.getAsFile()));
+    addBulkData([...e.dataTransfer.items].map((item) => item.getAsFile()));
   }} />
 
-<main>
-  {#if modManagerConfig}
-    <section style="position: sticky; top: 0; background: #fff">
-      <details>
-        <summary>View raw</summary>
-        <pre>
-					{JSON.stringify(modManagerConfig, null, 2)}
-					{JSON.stringify(openMWConfig, null, 2)}
-				</pre>
-      </details>
-      <!-- {#if !openMWConfig.openMWConfigPath} -->
+<main class="content">
+  {#if ready}
+    <div class="dataToolbar">
       <label for="openMWConfig">OpenMW config file</label>
       <input
         type="file"
@@ -156,90 +144,169 @@
       <button type="button" on:click={handleSaveToOpenMWConfig}
         >Update OpenMW config</button
       >
-      <button type="button" on:click={handleRunOpenMW}>Run OpenMW</button>
-      <button type="button" on:click={handleSortContent}>Sort content</button>
-    </section>
-    <!-- {/if} -->
-    {#if openMWConfig}
-      <section
-        class="modsList"
-        use:dndzone={{ items: currentMods, flipDurationMs }}
-        on:consider={handleDndConsider}
-        on:finalize={handleDndFinalize}
+    </div>
+    <section class="dataSection">
+      <div
+        class="dataList"
+        use:dndzone={{ items: dataItems, flipDurationMs }}
+        on:consider={handleDndConsiderData}
+        on:finalize={handleDndFinalizeData}
       >
-        {#each currentMods as item (item.id)}
+        {#each dataItems as dataItem (dataItem.id)}
           <div
             animate:flip={{ duration: flipDurationMs }}
-            class="modItem"
-            data-modid={item.id}
+            class="dataItem"
             on:contextmenu={(e) => {
               e.preventDefault();
-              /** @type {HTMLElement|null} */
-              const modListItem = e.target.closest("[data-modid]");
-              if (modListItem) {
-                menuModToRemoveID = modListItem.dataset.modid;
-                console.log({ menuModToRemoveID });
-                modMenuItem.popup();
-              }
+              menuDataToRemoveID = dataItem.id;
+              console.log({ menuDataToRemoveID });
+              dataItemMenu.popup();
             }}
           >
             <div>
               <input
                 type="checkbox"
-                name={`enableMod_${item.id}`}
-                checked={!item.disabled}
-                on:change={() => handleToggleMod(item.id)}
+                name={`enableData_${dataItem.id}`}
+                checked={!dataItem.disabled}
+                on:change={() => handleToggleData(dataItem.id)}
               />
             </div>
             <div>
-              <h4>{getModName(item)}</h4>
-              {#if item.disabled}
-                <s>{item.dataFolder}</s>
+              <h4>{dataItem.name}</h4>
+              {#if dataItem.disabled}
+                <s>{dataItem.dataFolder}</s>
               {:else}
-                {item.dataFolder}
+                {dataItem.dataFolder}
               {/if}
             </div>
           </div>
         {/each}
-      </section>
-    {/if}
+      </div>
+    </section>
+    <div class="contentToolbar">
+      <button type="button" on:click={handleSortContent}>Sort content</button>
+    </div>
+    <section class="contentSection">
+      {#if ready}
+        <div class="contentItemList">
+          {#each contentItems as contentItem (contentItem.id)}
+            <div class="contentItem">
+              <div>
+                <input
+                  type="checkbox"
+                  name={`enableContent_${contentItem.id}`}
+                  checked={!contentItem.disabled}
+                />
+              </div>
+              <div>
+                <span>{contentItem.name}</span>
+                <br />
+                <small>{dataNames.get(contentItem.dataID)}</small>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </section>
   {/if}
+  <section class="logsSection">
+    <h3>Logs</h3>
+    <ol style="list-style: none;" bind:this={logMessagesContainer}>
+      {#each logMessages as logMessage}
+        <li>{logMessage}</li>
+      {/each}
+    </ol>
+  </section>
 </main>
 
 <style>
+  .content {
+    display: grid;
+    grid-template-areas:
+      "data-toolbar content-toolbar"
+      "data content"
+      "data logs";
+    grid-template-columns: 3fr 2fr;
+    grid-template-rows: 1fr 8fr 3fr;
+    grid-gap: 24px;
+    height: 100vh;
+  }
+  .dataToolbar {
+    grid-area: data-toolbar;
+  }
+  .contentToolbar {
+    grid-area: content-toolbar;
+  }
+  .dataSection {
+    grid-area: data;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .contentSection {
+    grid-area: content;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .logsSection {
+    grid-area: logs;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .logsSection ol {
+    margin: 0;
+    padding: 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding-bottom: 16px;
+  }
   main {
-    /* text-align: center; */
     padding: 1em;
     max-width: 240px;
     margin: 0 auto;
-  }
-  h1 {
-    color: #ff3e00;
-    text-transform: uppercase;
-    font-size: 4em;
-    font-weight: 100;
   }
   @media (min-width: 640px) {
     main {
       max-width: none;
     }
   }
-  .modsList {
+  .dataList {
     border: 1px solid lightgray;
     border-radius: 2px;
+    overflow-y: auto;
   }
-  .modItem {
+  .dataItem {
     padding: 16px 24px;
     display: grid;
     grid-template-columns: auto 1fr;
     grid-gap: 24px;
     align-items: center;
   }
-  .modItem h4 {
+  .dataItem h4 {
     margin-top: 0;
     margin-bottom: 8px;
   }
-  .modItem:nth-of-type(even) {
-    background-color: #e9f7ff;
+  .dataItem:nth-of-type(even) {
+    background-color: #ecf8ff;
+  }
+  .contentItemList {
+    border: 1px solid lightgray;
+    border-radius: 2px;
+    overflow-y: auto;
+  }
+  .contentItem {
+    padding: 16px 24px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    grid-gap: 12px;
+    align-items: center;
+  }
+  .contentItem input {
+    margin: 0;
+  }
+  .contentItem:nth-of-type(even) {
+    background-color: #ecf8ff;
   }
 </style>

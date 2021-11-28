@@ -5,8 +5,5 @@ process.once("loaded", () => {
     if (evt.data.type === "select-dirs") {
       ipcRenderer.send("select-dirs");
     }
-    if (evt.data.type === "run-open-mw") {
-      ipcRenderer.send("run-open-mw");
-    }
   });
 });

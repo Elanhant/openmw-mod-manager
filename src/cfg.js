@@ -1,3 +1,5 @@
+const { produce } = require("immer");
+
 /**
  *
  * @typedef {Object} CfgSection
@@ -35,7 +37,7 @@ function parseCfg(rawCfgFile) {
       continue;
     }
     const key = line.substr(0, eqIdx);
-    const value = line.substr(eqIdx + 1);
+    const value = line.substr(eqIdx + 1).replace(/^\"|\"$/g, "");
     if (!cfgMap.has(key)) {
       template.push(`[PLACEHOLDER=${key}]`);
       cfgMap.set(key, {
@@ -82,14 +84,13 @@ function stringifyCfg(cfgParsed) {
  * @returns {CfgParsed}
  */
 function updateOrSetValuesForKey(cfg, key, updater) {
-  if (!cfg.cfgConfigMap.has("data")) {
-    cfg.cfgConfigMap.set("data", {
+  if (!cfg.cfgConfigMap.has(key)) {
+    cfg.cfgConfigMap.set(key, {
       values: new Set(),
     });
   }
-  cfg.cfgConfigMap.get("data").values = updater(
-    cfg.cfgConfigMap.get("data").values
-  );
+
+  cfg.cfgConfigMap.get(key).values = updater(cfg.cfgConfigMap.get(key).values);
 
   return cfg;
 }
