@@ -61,11 +61,11 @@
     ipcRenderer.send("reorder-data", dataItems);
   }
   function handleDndConsiderContent(e) {
-    // contentItems = e.detail.items;
+    contentItems = e.detail.items;
   }
   function handleDndFinalizeContent(e) {
-    // contentItems = e.detail.items;
-    // ipcRenderer.send("reorder-content", contentItems);
+    contentItems = e.detail.items;
+    ipcRenderer.send("reorder-content", contentItems);
   }
 
   /**
@@ -85,6 +85,7 @@
     contentItems = content;
     ready = true;
     console.log({ dataItems, contentItems });
+    console.log(content);
   });
 
   ipcRenderer.on("select-openmw-config-file", (event, config) => {
@@ -243,7 +244,7 @@
       "data content"
       "data logs";
     grid-template-columns: 3fr 2fr;
-    grid-template-rows: 1fr 8fr 3fr;
+    grid-template-rows: auto 8fr 3fr;
     grid-gap: 24px;
     height: 100vh;
   }

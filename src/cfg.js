@@ -1,5 +1,3 @@
-const { produce } = require("immer");
-
 /**
  *
  * @typedef {Object} CfgSection

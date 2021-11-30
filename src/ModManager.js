@@ -261,22 +261,14 @@ function ModManager({
     },
     /**
      * @typedef {Object} ModManagerDataForUI
-     * @property {import('./ModsListManager').OpenMWData[]} data
-     * @property {import('./ModsListManager').OpenMWContent[]} content
+     * @property {import('./ModsListManager').ModsListManagerState['data']} data
+     * @property {import('./ModsListManager').ModsListManagerState['content']} content
      */
     /**
      * @returns {Promise<ModManagerDataForUI>}
      */
     async getDataForUI() {
-      const [config, content] = await Promise.all([
-        modsListManager.getConfig(),
-        modsListManager.getContent(),
-      ]);
-
-      return {
-        data: config.data,
-        content,
-      };
+      return await modsListManager.getState();
     },
     /**
      *
@@ -343,7 +335,7 @@ function ModManager({
         throw new Error("modsListManager is not initialized!");
       }
 
-      await modsListManager.changeContentOrder(content.map((item) => item.id));
+      await modsListManager.changeContentOrder(content);
     },
     /**
      * @returns {Promise<void>}

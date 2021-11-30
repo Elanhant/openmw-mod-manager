@@ -3,16 +3,20 @@ const fsPromises = require("fs").promises;
 const { produce } = require("immer");
 const { updateOrSetValuesForKey } = require("./cfg");
 
+const OPENMW_DATA_CONTENT_KEY = "data";
+const OPENMW_CFG_FALLBACK_KEY = "fallback";
+const OPENMW_CFG_CONTENT_KEY = "content";
+
 /**
  * @typedef {Object} ModsListManagerConfig
  * @property {OpenMWData[]} data
- * @property {string[]} content
+ * @property {OpenMWContent[]} content
  */
 
 /**
  * @typedef {Object} ModsListManagerState
  * @property {OpenMWData[]} data
- * @property {Set<string>} content
+ * @property {OpenMWContent[]} content
  */
 
 /**
@@ -50,14 +54,8 @@ const { updateOrSetValuesForKey } = require("./cfg");
 
 /**
  * @async
- * @callback getConfigFn
+ * @callback getStateFn
  * @returns {Promise<ModsListManagerState>}
- */
-
-/**
- * @async
- * @callback getContentFn
- * @returns {Promise<OpenMWContent[]>}
  */
 
 /**
@@ -108,7 +106,7 @@ const { updateOrSetValuesForKey } = require("./cfg");
 
 /**
  * @callback changeContentOrderFn
- * @param {string[]} updatedLoadOrder
+ * @param {OpenMWContent[]} updatedLoadOrder
  * @returns {Promise<void>}
  */
 
@@ -122,8 +120,7 @@ const { updateOrSetValuesForKey } = require("./cfg");
  * @typedef {Object} ModsListManager
  * @property {initFn} init
  * @property {changeEventListener} addListener
- * @property {getConfigFn} getConfig
- * @property {getContentFn} getContent
+ * @property {getStateFn} getState
  * @property {addDataFn} addData
  * @property {toggleDataFn} toggleData
  * @property {removeDataFn} removeData
@@ -195,7 +192,7 @@ function ModsListManager({ configPath }) {
   function configToState(config) {
     return {
       data: config.data,
-      content: new Set(config.content),
+      content: config.content,
     };
   }
 
@@ -263,11 +260,14 @@ function ModsListManager({ configPath }) {
   /**
    * @async
    * @param {string} dataFolderPath
-   * @returns {Promise<string[]>}
+   * @returns {Promise<{bsaFiles: string[], contentFiles: string[]}>}
    */
-  async function collectBSAFileNames(dataFolderPath) {
+  async function collectDataFilesInfo(dataFolderPath) {
     const files = await fsPromises.readdir(dataFolderPath);
-    return files.filter((file) => file.toLowerCase().endsWith(".bsa"));
+    return {
+      bsaFiles: files.filter((file) => ARCHIVE_FILE_REGEX.test(file)),
+      contentFiles: files.filter((file) => CONTENT_FILE_REGEX.test(file)),
+    };
   }
 
   async function isMorrowindData(dataPath) {
@@ -295,64 +295,9 @@ function ModsListManager({ configPath }) {
     return modName;
   }
 
+  const ARCHIVE_FILE_REGEX = /\.(bsa)$/i;
   const CONTENT_FILE_REGEX = /\.(esp|esm|omwaddon)$/i;
-
-  /**
-   *
-   * @returns {Promise<OpenMWContent[]>}
-   */
-  async function getContent() {
-    /** @type {Map<string, OpenMWContent>} */
-    const contentFilesMap = new Map();
-
-    /**
-     * @type {Promise<OpenMWContent[]>[]}
-     */
-    const dataPromises = currentState.data
-      .filter((dataItem) => !dataItem.disabled)
-      .map(
-        (dataItem) =>
-          new Promise(async (resolve) => {
-            const files = await fsPromises.readdir(dataItem.dataFolder);
-
-            resolve(
-              files
-                .filter((fileName) => CONTENT_FILE_REGEX.test(fileName))
-                .map((fileName) => {
-                  return {
-                    id: fileName,
-                    dataID: dataItem.id,
-                    name: fileName,
-                    disabled: !currentState.content.has(fileName),
-                  };
-                })
-            );
-          })
-      );
-    const allContentFiles = (await Promise.all(dataPromises)).flat();
-
-    // We need to go through each content again to make sure that
-    // the content from the latest data folders overrides the same content
-    // from the previous folders
-    for (const content of allContentFiles) {
-      contentFilesMap.set(content.id, content);
-    }
-
-    const sortOrderEntries = [...currentState.content].reduce(
-      (memo, content, idx) => ({ ...memo, [content]: idx }),
-      {}
-    );
-
-    return [...contentFilesMap.values()]
-      .filter((content) => !content.disabled)
-      .sort(
-        (contentA, contentB) =>
-          sortOrderEntries[contentA.id] - sortOrderEntries[contentB.id]
-      )
-      .concat(
-        [...contentFilesMap.values()].filter((content) => content.disabled)
-      );
-  }
+  const OMWADDON_FILE_REGEX = /\.omwaddon$/i;
 
   /** @type {addDataFn} */
   async function addData(dataFolderPaths) {
@@ -386,8 +331,54 @@ function ModsListManager({ configPath }) {
         await addData([...dataFromCfg]);
 
         const contentFromCfg =
-          cfg.cfgConfigMap.get("content").values || new Set();
-        currentState.content = contentFromCfg;
+          cfg.cfgConfigMap.get(OPENMW_CFG_CONTENT_KEY).values || new Set();
+
+        /** @type {Promise<{data: OpenMWData, fileNames: string[]}>[]} */
+        const dataPromises = currentState.data
+          .filter((data) => !data.disabled)
+          .map(
+            (data) =>
+              new Promise((resolve) => {
+                fsPromises
+                  .readdir(data.dataFolder)
+                  .then((fileNames) => resolve({ data, fileNames }));
+              })
+          );
+
+        const contentFiles = (await Promise.all(dataPromises))
+          .map(({ data, fileNames }) => ({
+            data,
+            fileNames: fileNames.filter((fileName) =>
+              CONTENT_FILE_REGEX.test(fileName)
+            ),
+          }))
+          .map(({ data, fileNames }) =>
+            fileNames.map((fileName) => ({
+              id: fileName,
+              dataID: data.id,
+              name: fileName,
+              disabled: !contentFromCfg.has(fileName),
+            }))
+          )
+          .flat();
+
+        const currentOrder = [...contentFromCfg].reduce(
+          (memo, fileName, idx) => ({ ...memo, [fileName]: idx }),
+          {}
+        );
+
+        contentFiles.sort(({ id: fileA }, { id: fileB }) => {
+          const currentOrderPositionA = currentOrder[fileA] || 0;
+          const currentOrderPositionB = currentOrder[fileB] || 0;
+
+          return currentOrderPositionA - currentOrderPositionB;
+        });
+
+        const contentMap = new Map(
+          // Content files from later data items will override files from earlier ones
+          contentFiles.map((contentItem) => [contentItem.id, contentItem])
+        );
+        currentState.content = [...contentMap.values()];
       }
     },
     addListener(eventName, callback) {
@@ -399,10 +390,9 @@ function ModsListManager({ configPath }) {
         );
       };
     },
-    async getConfig() {
+    async getState() {
       return currentState;
     },
-    getContent,
     async changeDataOrder(nextData) {
       const nextState = produce(currentState, (draft) => {
         draft.data = nextData;
@@ -427,12 +417,21 @@ function ModsListManager({ configPath }) {
         let newContent = [...draft.content];
         if (draft.data[dataItemIndex].disabled) {
           newContent = newContent.filter(
-            (contentFile) => !dataContentFiles.includes(contentFile)
+            (contentItem) => !dataContentFiles.includes(contentItem.id)
           );
         } else {
-          newContent.push(...dataContentFiles);
+          newContent = newContent.concat(
+            dataContentFiles
+              .map((fileName) => ({
+                id: fileName,
+                dataID: dataItemID,
+                name: fileName,
+                disabled: false,
+              }))
+              .flat()
+          );
         }
-        draft.content = new Set(newContent);
+        draft.content = newContent;
       });
 
       await applyStateChanges(nextState);
@@ -449,8 +448,9 @@ function ModsListManager({ configPath }) {
     convertContentToGameFiles() {
       return `
 [Game Files]
-${[...currentState.content]
-  .map((item, idx) => `GameFile${idx}=${item}`)
+${currentState.content
+  .filter((contentItem) => !contentItem.disabled)
+  .map((contentItem, idx) => `GameFile${idx}=${contentItem.id}`)
   .join("\r\n")}`;
     },
     async applyChangesToCfg(cfg) {
@@ -459,15 +459,18 @@ ${[...currentState.content]
       }
 
       /**
-       * @type {Promise<{ bsaFileNames: string[], data: OpenMWData }>[]}
+       * @type {Promise<{ bsaFiles: string[], contentFiles: string[], data: OpenMWData }>[]}
        */
       const dataPromises = currentState.data.map(
         (dataItem) =>
           new Promise(async (resolve) => {
-            const bsaFileNames = await collectBSAFileNames(dataItem.dataFolder);
+            const { bsaFiles, contentFiles } = await collectDataFilesInfo(
+              dataItem.dataFolder
+            );
 
             resolve({
-              bsaFileNames,
+              bsaFiles,
+              contentFiles,
               data: dataItem,
             });
           })
@@ -476,8 +479,8 @@ ${[...currentState.content]
       const dataInfo = await Promise.all(dataPromises);
 
       const fallbackArchives = dataInfo
-        .map(({ bsaFileNames, data }) =>
-          bsaFileNames.map((fileName) => ({
+        .map(({ bsaFiles, data }) =>
+          bsaFiles.map((fileName) => ({
             fileName,
             disabled: data.disabled,
           }))
@@ -487,56 +490,84 @@ ${[...currentState.content]
       const dataItems = dataInfo.map(({ data }) => data);
 
       return produce(cfg, (draft) => {
-        updateOrSetValuesForKey(draft, "fallback", (prevValues) => {
-          const nextValues = new Set(prevValues);
-          for (const fallbackItem of fallbackArchives) {
-            if (fallbackItem.disabled) {
-              if (prevValues.has(fallbackItem.fileName)) {
-                nextValues.delete(fallbackItem.fileName);
+        updateOrSetValuesForKey(
+          draft,
+          OPENMW_CFG_FALLBACK_KEY,
+          (prevValues) => {
+            const nextValues = new Set(prevValues);
+            for (const fallbackItem of fallbackArchives) {
+              if (fallbackItem.disabled) {
+                if (prevValues.has(fallbackItem.fileName)) {
+                  nextValues.delete(fallbackItem.fileName);
+                }
+                continue;
               }
-              continue;
+              nextValues.add(fallbackItem.fileName);
             }
-            nextValues.add(fallbackItem.fileName);
+            return nextValues;
           }
-          return nextValues;
-        });
-
-        updateOrSetValuesForKey(draft, "data", (prevValues) => {
-          const nextValues = new Set(prevValues);
-          for (const dataItem of dataItems) {
-            if (dataItem.disabled) {
-              if (prevValues.has(dataItem.dataFolder)) {
-                nextValues.delete(dataItem.dataFolder);
-              }
-              continue;
-            }
-            nextValues.add(dataItem.dataFolder);
-          }
-          return nextValues;
-        });
+        );
 
         updateOrSetValuesForKey(
           draft,
-          "content",
-          () => new Set(currentState.content)
+          OPENMW_DATA_CONTENT_KEY,
+          (prevValues) => {
+            const nextValues = new Set(prevValues);
+            for (const dataItem of dataItems) {
+              if (dataItem.disabled) {
+                if (prevValues.has(dataItem.dataFolder)) {
+                  nextValues.delete(dataItem.dataFolder);
+                }
+                continue;
+              }
+              nextValues.add(dataItem.dataFolder);
+            }
+            return nextValues;
+          }
+        );
+
+        updateOrSetValuesForKey(
+          draft,
+          OPENMW_CFG_CONTENT_KEY,
+          () =>
+            new Set(
+              currentState.content
+                .filter((contentItem) => !contentItem.disabled)
+                .map((contentItem) => contentItem.id)
+            )
         );
       });
     },
     async changeContentOrder(updatedLoadOrder) {
       const nextState = produce(currentState, (draft) => {
-        draft.content = new Set(updatedLoadOrder);
+        draft.content = updatedLoadOrder;
       });
 
       await applyStateChanges(nextState);
     },
     async applyContentOrderFromMlox(updatedLoadOrder) {
       const nextState = produce(currentState, (draft) => {
-        draft.content = new Set([
-          // It is important to put updatedLoadOrder first so that
-          // .omwaddon files are at the bottom
-          ...updatedLoadOrder,
-          ...draft.content,
-        ]);
+        const updatedOrderMap = updatedLoadOrder.reduce(
+          (memo, fileName, idx) => ({ ...memo, [fileName]: idx }),
+          {}
+        );
+
+        draft.content.sort(({ id: fileA }, { id: fileB }) => {
+          if (OMWADDON_FILE_REGEX.test(fileA)) {
+            if (OMWADDON_FILE_REGEX.test(fileB)) {
+              return 0;
+            } else {
+              return 1;
+            }
+          } else if (OMWADDON_FILE_REGEX.test(fileB)) {
+            return -1;
+          }
+
+          const updatedOrderPositionA = updatedOrderMap[fileA] || 0;
+          const updatedOrderPositionB = updatedOrderMap[fileB] || 0;
+
+          return updatedOrderPositionA - updatedOrderPositionB;
+        });
       });
 
       await applyStateChanges(nextState);

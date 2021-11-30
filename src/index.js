@@ -5,6 +5,7 @@
  *  - XState
  *  - immer patches
  *  - logs
+ *  - prisma?
  */
 
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
