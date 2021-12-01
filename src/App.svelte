@@ -84,8 +84,6 @@
     dataItems = data;
     contentItems = content;
     ready = true;
-    console.log({ dataItems, contentItems });
-    console.log(content);
   });
 
   ipcRenderer.on("select-openmw-config-file", (event, config) => {
@@ -162,7 +160,6 @@
       >
         {#each dataItems as dataItem (dataItem.id)}
           <div
-            animate:flip={{ duration: flipDurationMs }}
             class="dataItem"
             on:contextmenu={(e) => {
               e.preventDefault();
@@ -203,10 +200,7 @@
           on:finalize={handleDndFinalizeContent}
         >
           {#each contentItems as contentItem (contentItem.id)}
-            <div
-              class="contentItem"
-              animate:flip={{ duration: flipDurationMs }}
-            >
+            <div class="contentItem">
               <div>
                 <input
                   type="checkbox"
