@@ -1,23 +1,21 @@
-# Electron Forge + Svelte  Starter
+# OpenMW Mod Manager
 
-Get up and running with 💪 Svelte & ⚡ Electron. 
+> IMPORTANT! This is a personal WIP project and should not be considered final or stable at this moment. It has been working quite well for me, and I will appreciate any feedback or bug reports, but do not expect this to be a Mod Organizer killer. Use it at your own risk!
+
+A very basic mod manager for [OpenMW](https://openmw.org/en/).
+
+Its goal is to provide a more convenient way to install, enable or sort mods (it also can run [mlox](https://github.com/mlox/mlox) if you have it installed).
 
 ## Usage
 
-```
-git clone https://github.com/codediodeio/electron-forge-svelte.git my-app
-cd my-app
+TODO
 
-npm install
-npm start
-```
+## Caveats
 
-![svelte electron](https://firebasestorage.googleapis.com/v0/b/fireship-app.appspot.com/o/assets%2Felectron-svelte-hello.png?alt=media&token=0d3ecb24-3024-4358-ac26-7676b3e60fa1)
+- `.omwaddon` files are not currently supported by mlox, so you will need to sort them manually _after_ sorting with mlox.
+- This mod manager currently overwrites your `openmw.cfg` file, so make sure to create a backup before trying (check [this wiki](https://openmw.readthedocs.io/en/latest/reference/modding/paths.html#configuration-files-and-log-files) to find where this file is located).
 
 ## Notes
 
-- src/index.js - Main electron process. 
-- src/svelte.js - Svelte app entrypoint. 
-
-Setup [Electron with Svelte](https://fireship.io/snippets/svelte-electron-setup) from scratch. 
-Build cool projects with [Electron](https://fireship.io/tags/electron). 
+Built using [Electron Forge + Svelte Starter
+](https://github.com/codediodeio/electron-forge-svelte).
