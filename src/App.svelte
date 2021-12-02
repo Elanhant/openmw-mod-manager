@@ -82,6 +82,14 @@
     ipcRenderer.send("toggle-data", dataID);
   }
 
+  /**
+   *
+   * @param {string} contentID
+   */
+  function handleToggleContent(contentID) {
+    ipcRenderer.send("toggle-content", contentID);
+  }
+
   function handleLaunchOpenMW() {
     ipcRenderer.send("launch-openmw");
   }
@@ -193,7 +201,7 @@
                   type="checkbox"
                   name={`enableContent_${contentItem.id}`}
                   checked={!contentItem.disabled}
-                  disabled
+                  on:change={() => handleToggleContent(contentItem.id)}
                 />
               </div>
               <div>

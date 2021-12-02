@@ -75,14 +75,14 @@ const OPENMW_CFG_CONTENT_KEY = "content";
 /**
  * @async
  * @callback toggleDataFn
- * @param {string} modID
+ * @param {string} dataID
  * @returns {Promise<void>}
  */
 
 /**
  * @async
  * @callback removeDataFn
- * @param {string} modID
+ * @param {string} dataID
  * @returns {Promise<void>}
 
 /**
@@ -102,6 +102,13 @@ const OPENMW_CFG_CONTENT_KEY = "content";
 /**
  * @callback convertContentToGameFilesFn
  * @returns {string}
+ */
+
+/**
+ * @async
+ * @callback toggleContentFn
+ * @param {string} contentID
+ * @returns {Promise<void>}
  */
 
 /**
@@ -127,6 +134,7 @@ const OPENMW_CFG_CONTENT_KEY = "content";
  * @property {changeDataOrderFn} changeDataOrder
  * @property {applyChangesToCfgFn} applyChangesToCfg
  * @property {convertContentToGameFilesFn} convertContentToGameFiles
+ * @property {toggleContentFn} toggleContent
  * @property {changeContentOrderFn} changeContentOrder
  * @property {applyContentOrderFromMloxFn} applyContentOrderFromMlox
  */
@@ -134,6 +142,7 @@ const OPENMW_CFG_CONTENT_KEY = "content";
 /**
  * @typedef {Object} ModsListManagerOptions
  * @property {string} configPath
+ * @property {ReturnType<import('./Logger').Logger>['log']} logMessage
  */
 
 /**
@@ -141,7 +150,7 @@ const OPENMW_CFG_CONTENT_KEY = "content";
  * @param {ModsListManagerOptions} options
  * @returns {ModsListManager}
  */
-function ModsListManager({ configPath }) {
+function ModsListManager({ configPath, logMessage }) {
   /** @type {ModsListManagerState | null}  */
   let currentState = null;
 
@@ -320,7 +329,12 @@ function ModsListManager({ configPath }) {
       ];
     });
 
+    const prevDataCount = currentState.data.length;
+    const nextDataCount = nextState.data.length;
+
     await applyStateChanges(nextState);
+
+    logMessage(`Added ${nextDataCount - prevDataCount} data folders`);
   }
 
   return {
@@ -401,10 +415,10 @@ function ModsListManager({ configPath }) {
       await applyStateChanges(nextState);
     },
     addData,
-    async toggleData(dataItemID) {
+    async toggleData(dataID) {
       const nextState = await produce(currentState, async (draft) => {
         const dataItemIndex = draft.data.findIndex(
-          (dataItem) => dataItem.id === dataItemID
+          (dataItem) => dataItem.id === dataID
         );
         const dataItem = draft.data[dataItemIndex];
         const dataContentFiles = (
@@ -424,7 +438,7 @@ function ModsListManager({ configPath }) {
             dataContentFiles
               .map((fileName) => ({
                 id: fileName,
-                dataID: dataItemID,
+                dataID: dataID,
                 name: fileName,
                 disabled: false,
               }))
@@ -435,15 +449,28 @@ function ModsListManager({ configPath }) {
       });
 
       await applyStateChanges(nextState);
+
+      const updatedDataItem = nextState.data.find(
+        (dataItem) => dataItem.id === dataID
+      );
+      logMessage(
+        updatedDataItem.disabled
+          ? `Disabled ${updatedDataItem.name}`
+          : `Enabled ${updatedDataItem.name}`
+      );
     },
-    async removeData(dataItemID) {
+    async removeData(dataID) {
       const nextState = produce(currentState, (draft) => {
-        draft.data = draft.data.filter(
-          (dataItem) => dataItem.id !== dataItemID
-        );
+        draft.data = draft.data.filter((dataItem) => dataItem.id !== dataID);
       });
 
+      const removedDataItem = currentState.data.find(
+        (dataItem) => dataItem.id === dataID
+      );
+
       await applyStateChanges(nextState);
+
+      logMessage(`Removed ${removedDataItem.name}`);
     },
     convertContentToGameFiles() {
       return `
@@ -537,6 +564,26 @@ ${currentState.content
             )
         );
       });
+    },
+    async toggleContent(contentID) {
+      const nextState = await produce(currentState, async (draft) => {
+        const contentItemIndex = draft.content.findIndex(
+          (contentItem) => contentItem.id === contentID
+        );
+        draft.content[contentItemIndex].disabled =
+          !draft.content[contentItemIndex].disabled;
+      });
+
+      await applyStateChanges(nextState);
+
+      const updatedContentItem = nextState.content.find(
+        (contentItem) => contentItem.id === contentID
+      );
+      logMessage(
+        updatedContentItem.disabled
+          ? `Disabled ${updatedContentItem.name}`
+          : `Enabled ${updatedContentItem.name}`
+      );
     },
     async changeContentOrder(updatedLoadOrder) {
       const nextState = produce(currentState, (draft) => {

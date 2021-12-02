@@ -173,6 +173,16 @@ const createWindow = async () => {
   /**
    *
    * @param {Electron.IpcMainEvent} event
+   * @param {string} contentID
+   */
+  async function handleToggleContent(event, contentID) {
+    await modManager.toggleContent(contentID);
+  }
+  ipcMain.on("toggle-content", handleToggleContent);
+
+  /**
+   *
+   * @param {Electron.IpcMainEvent} event
    * @param {import('./ModsListManager').OpenMWContent[]} content
    */
   async function handleReorderContent(event, content) {

@@ -340,6 +340,7 @@ function ModManager({
       modManagerConfig = await getModManagerConfig(modManagerConfigPath);
       modsListManager = ModsListManager({
         configPath: modsListManagerConfigPath,
+        logMessage,
       });
       const openMWConfig = await parseOpenMWConfig();
       await restoreOpenMWConfigFromBackup();
@@ -372,9 +373,7 @@ function ModManager({
       if (modsListManager == null) {
         throw new Error("modsListManager is not initialized!");
       }
-      logMessage(`Adding ${dataFolderPaths.length} mods...`);
       await modsListManager.addData(dataFolderPaths);
-      logMessage(`Successfully added ${dataFolderPaths.length} mods`);
     },
     /**
      *
@@ -397,7 +396,6 @@ function ModManager({
       }
 
       await modsListManager.toggleData(dataID);
-      logMessage(`Successfully toggled ${dataID}`);
     },
     /**
      *
@@ -408,9 +406,18 @@ function ModManager({
         throw new Error("modsListManager is not initialized!");
       }
 
-      logMessage(`Removing ${dataID}...`);
       await modsListManager.removeData(dataID);
-      logMessage(`Successfully removed ${dataID}`);
+    },
+    /**
+     *
+     * @param {string} contentID
+     */
+    async toggleContent(contentID) {
+      if (modsListManager == null) {
+        throw new Error("modsListManager is not initialized!");
+      }
+
+      await modsListManager.toggleContent(contentID);
     },
     /**
      *
