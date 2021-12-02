@@ -3,15 +3,15 @@ const path = require("path");
 const fsPromises = require("fs").promises;
 const ModsListManager = require("./ModsListManager");
 const { parseCfg, stringifyCfg } = require("./cfg");
+const { LogLevel } = require("./Logger");
 const util = require("util");
 
 const TEMP_GAME_FILES_INI_FILENAME = "game_files.ini";
 
+/** @typedef {"openMWConfigPath"|"openMWLauncherPath"|"mloxPath"} ModManagerConfigKey */
+
 /**
- * @typedef {Object} ModManagerConfig
- * @property {string} openMWConfigPath
- * @property {string} openMWLauncherPath
- * @property {string} mloxPath
+ * @typedef {Object.<ModManagerConfigKey, string>} ModManagerConfig
  */
 
 /**
@@ -88,6 +88,12 @@ async function saveModManagerConfig(configPath, config) {
 
 /**
  * @async
+ * @callback requestOpenMWLauncherPath
+ * @returns {Promise<string>}
+ */
+
+/**
+ * @async
  * @callback requestMloxPath
  * @returns {Promise<string>}
  */
@@ -99,8 +105,9 @@ async function saveModManagerConfig(configPath, config) {
  * @property {string} modsListManagerConfigPath
  * @property {string} tempDirPath
  * @property {requestOpenMWConfigPath} requestOpenMWConfigPath
+ * @property {requestOpenMWLauncherPath} requestOpenMWLauncherPath
  * @property {requestMloxPath} requestMloxPath
- * @property {function(string):void} logMessage
+ * @property {ReturnType<import('./Logger').Logger>['log']} logMessage
  */
 
 /**
@@ -112,6 +119,7 @@ function ModManager({
   modsListManagerConfigPath,
   tempDirPath,
   requestOpenMWConfigPath,
+  requestOpenMWLauncherPath,
   requestMloxPath,
   logMessage,
 }) {
@@ -121,14 +129,52 @@ function ModManager({
   let modsListManager = null;
 
   /**
+   * @param {ModManagerConfigKey} key
+   * @returns {string}
+   */
+  function getModManagerConfigValue(key) {
+    try {
+      const value = modManagerConfig[key];
+      return value;
+    } catch (e) {
+      logMessage(
+        "Cannot use mod manager before it is initialized!",
+        LogLevel.Error
+      );
+      throw new Error("Cannot use mod manager before it is initialized!");
+    }
+  }
+
+  /**
+   * @param {ModManagerConfigKey} key
+   * @param {string} value
+   */
+  function setModManagerConfigValue(key, value) {
+    try {
+      modManagerConfig[key] = value;
+    } catch (e) {
+      logMessage(
+        "Cannot use mod manager before it is initialized!",
+        LogLevel.Error
+      );
+      throw new Error("Cannot use mod manager before it is initialized!");
+    }
+  }
+
+  /**
    *
    * @param {string} newPath
    */
   async function updateOpenMWConfigPath(newPath) {
-    if (modManagerConfig == null) {
-      throw new Error("modManagerConfig is not initialized!");
-    }
-    modManagerConfig.openMWConfigPath = newPath;
+    setModManagerConfigValue("openMWConfigPath", newPath);
+    await saveModManagerConfig(modManagerConfigPath, modManagerConfig);
+  }
+  /**
+   *
+   * @param {string} newPath
+   */
+  async function updateOpenMWLauncherPath(newPath) {
+    setModManagerConfigValue("openMWLauncherPath", newPath);
     await saveModManagerConfig(modManagerConfigPath, modManagerConfig);
   }
   /**
@@ -136,10 +182,7 @@ function ModManager({
    * @param {string} newPath
    */
   async function updateMloxPath(newPath) {
-    if (modManagerConfig == null) {
-      throw new Error("modManagerConfig is not initialized!");
-    }
-    modManagerConfig.mloxPath = newPath;
+    setModManagerConfigValue("mloxPath", newPath);
     await saveModManagerConfig(modManagerConfigPath, modManagerConfig);
   }
 
@@ -147,11 +190,7 @@ function ModManager({
    * @returns {Promise<string>}
    */
   async function getOpenMWConfigPath() {
-    if (modManagerConfig == null) {
-      throw new Error("modManagerConfig is not initialized!");
-    }
-
-    const { openMWConfigPath } = modManagerConfig;
+    const openMWConfigPath = getModManagerConfigValue("openMWConfigPath");
 
     let configPath;
 
@@ -171,10 +210,6 @@ function ModManager({
    * @returns {Promise<import('./cfg').CfgParsed>}
    */
   async function parseOpenMWConfig() {
-    if (modManagerConfig == null) {
-      throw new Error("modManagerConfig is not initialized!");
-    }
-
     const configPath = await getOpenMWConfigPath();
 
     const rawOpenMWConfig = await fsPromises.readFile(configPath, "utf-8");
@@ -188,24 +223,74 @@ function ModManager({
    * @returns {Promise<void>}
    */
   async function saveOpenMWConfig(cfg) {
-    if (modManagerConfig == null) {
-      throw new Error("modManagerConfig is not initialized!");
-    }
-
     const configPath = await getOpenMWConfigPath();
 
     await fsPromises.writeFile(configPath, stringifyCfg(cfg));
   }
 
   /**
+   * @async
+   * @returns {Promise<void>}
+   */
+  async function backupOpenMWConfig() {
+    logMessage("Saving OpenMW config to a backup file...");
+
+    const configPath = await getOpenMWConfigPath();
+    const backupPath = `${configPath}.backup`;
+
+    await fsPromises.copyFile(configPath, backupPath);
+    logMessage("OpenMW config has been saved to a backup!");
+  }
+
+  /**
+   * @async
+   * @returns {Promise<void>}
+   */
+  async function restoreOpenMWConfigFromBackup() {
+    logMessage("Restoring OpenMW config from backup...");
+
+    const configPath = await getOpenMWConfigPath();
+    const backupPath = `${configPath}.backup`;
+
+    try {
+      await fsPromises.access(backupPath);
+      try {
+        await fsPromises.copyFile(backupPath, configPath);
+        await fsPromises.unlink(backupPath);
+        logMessage("OpenMW config has been restored!");
+      } catch (e) {
+        logMessage(`Failed to restore OpenMW config`, LogLevel.Error, e);
+      }
+    } catch (e) {
+      logMessage("No backup file found");
+      return;
+    }
+  }
+
+  /**
+   * @returns {Promise<string>}
+   */
+  async function getOpenMWLauncherPath() {
+    const openMWLauncherPath = getModManagerConfigValue("openMWLauncherPath");
+
+    let executablePath;
+
+    try {
+      await fsPromises.access(openMWLauncherPath);
+      executablePath = openMWLauncherPath;
+    } catch (e) {
+      executablePath = await requestOpenMWLauncherPath();
+      await updateOpenMWLauncherPath(executablePath);
+    }
+
+    return executablePath;
+  }
+
+  /**
    * @returns {Promise<string>}
    */
   async function getMloxExecutablePath() {
-    if (modManagerConfig == null) {
-      throw new Error("modManagerConfig is not initialized!");
-    }
-
-    const { mloxPath } = modManagerConfig;
+    const mloxPath = getModManagerConfigValue("mloxPath");
 
     let executablePath;
 
@@ -257,6 +342,7 @@ function ModManager({
         configPath: modsListManagerConfigPath,
       });
       const openMWConfig = await parseOpenMWConfig();
+      await restoreOpenMWConfigFromBackup();
       await modsListManager.init(openMWConfig);
     },
     /**
@@ -354,12 +440,10 @@ function ModManager({
       logMessage(`Running mlox...`);
       const execFile = util.promisify(require("child_process").execFile);
       const mloxExecutablePath = await getMloxExecutablePath();
-      const { stdout, stderr } = await execFile(mloxExecutablePath, [
+      const { stdout } = await execFile(mloxExecutablePath, [
         "-f",
         iniFilePath,
       ]);
-
-      console.log("stdout:", stdout);
 
       logMessage(`Parsing mlox output...`);
       const gameFiles = parseMloxOutput(stdout);
@@ -372,22 +456,26 @@ function ModManager({
       logMessage(`Saving content order to OpenMW config...`);
       await saveOpenMWConfig(updatedCfg);
       logMessage(`Successfully updated content order`);
-
-      console.log("stderr:", stderr);
     },
-    async updateOpenMWConfig() {
-      if (modsListManager == null) {
-        throw new Error("modsListManager is not initialized!");
+    restoreOpenMWConfig: restoreOpenMWConfigFromBackup,
+    async runOpenMW() {
+      await backupOpenMWConfig();
+      const execFile = util.promisify(require("child_process").execFile);
+
+      const openMWLauncherPath = await getOpenMWLauncherPath();
+
+      const cfg = await parseOpenMWConfig();
+      const updatedCfg = await modsListManager.applyChangesToCfg(cfg);
+      await saveOpenMWConfig(updatedCfg);
+
+      try {
+        await execFile(openMWLauncherPath);
+      } catch (e) {
+        logMessage("Failed to run OpenMW", LogLevel.Error, e);
+      } finally {
+        await restoreOpenMWConfigFromBackup();
       }
-
-      logMessage(`Saving to OpenMW config...`);
-      let cfg = await parseOpenMWConfig();
-      cfg = await modsListManager.applyChangesToCfg(cfg);
-
-      await saveOpenMWConfig(cfg);
-      logMessage(`Successfully saved to OpenMW config`);
     },
-    updateOpenMWConfigPath,
   };
 }
 

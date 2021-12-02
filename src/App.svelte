@@ -1,40 +1,46 @@
 <script>
-  import { afterUpdate } from "svelte";
-  import { flip } from "svelte/animate";
   import { dndzone } from "svelte-dnd-action";
+  import Log from "./components/Log.svelte";
   /** @type {Electron} */
   const electron = window.require("electron");
 
-  const { ipcRenderer, remote } = electron;
+  const { ipcRenderer, remote, shell } = electron;
   const { Menu, MenuItem } = remote;
 
-  let menuDataToRemoveID = null;
+  /**
+   *
+   * @param {import('./ModsListManager.js').OpenMWData} dataItem
+   * @returns {Electron.Menu}
+   */
+  function createDataItemMenu(dataItem) {
+    const dataItemMenu = new Menu();
 
-  const dataItemMenu = new Menu();
+    const dataItemMenuItemOpenDir = new MenuItem({
+      label: "Open folder",
+      click: () => {
+        shell.openItem(dataItem.dataFolder);
+      },
+    });
+    dataItemMenu.append(dataItemMenuItemOpenDir);
 
-  const dataItemMenuItemRemove = new MenuItem({
-    label: "Remove mod...",
-    click: () => {
-      if (window.confirm("Are you sure you want to remove this mod?")) {
-        ipcRenderer.send("remove-data", menuDataToRemoveID);
-      }
-    },
-  });
-  dataItemMenu.append(dataItemMenuItemRemove);
+    const dataItemMenuItemRemove = new MenuItem({
+      label: "Remove data files...",
+      click: () => {
+        if (
+          window.confirm(`Are you sure you want to remove ${dataItem.name}?`)
+        ) {
+          ipcRenderer.send("remove-data", dataItem.id);
+        }
+      },
+    });
+    dataItemMenu.append(dataItemMenuItemRemove);
+    return dataItemMenu;
+  }
 
   let ready = false;
 
-  /** @type {string[]} */
+  /** @type {import('./Logger').LogMessage[]} */
   let logMessages = [];
-
-  /** @type {HTMLDivElement} */
-  let logMessagesContainer;
-
-  afterUpdate(() => {
-    if (logMessagesContainer) {
-      logMessagesContainer.scrollTo(0, logMessagesContainer.scrollHeight);
-    }
-  });
 
   /**
    * @type {import('./ModsListManager.js').OpenMWData[]}
@@ -44,7 +50,7 @@
    * @type {Map<string, string>}
    */
   $: dataNames = new Map(
-    dataItems.map((dataEntry) => [dataEntry.id, dataEntry.name])
+    dataItems.map((dataItem) => [dataItem.id, dataItem.name])
   );
 
   /**
@@ -76,8 +82,8 @@
     ipcRenderer.send("toggle-data", dataID);
   }
 
-  function handleSaveToOpenMWConfig() {
-    ipcRenderer.send("update-openmw-config");
+  function handleLaunchOpenMW() {
+    ipcRenderer.send("launch-openmw");
   }
 
   ipcRenderer.on("mod-manager-ready", (event, { data, content }) => {
@@ -86,20 +92,10 @@
     ready = true;
   });
 
-  ipcRenderer.on("select-openmw-config-file", (event, config) => {
-    console.log("select-openmw-config-file", config);
-  });
-
   ipcRenderer.on("log-message", (event, message) => {
     console.log(event, message);
     logMessages = logMessages.concat([message]);
   });
-
-  function selectOpenMWConfig(event) {
-    /** @type {File} */
-    const file = event.target.files[0];
-    ipcRenderer.send("select-openmw-config-file", file.path);
-  }
 
   function handleSelectDirs(event) {
     event.preventDefault();
@@ -137,21 +133,16 @@
 
 <main class="content">
   {#if ready}
-    <div class="dataToolbar">
-      <label for="openMWConfig">OpenMW config file</label>
-      <input
-        type="file"
-        id="openMWConfig"
-        multiple={false}
-        accept=".cfg"
-        on:change={selectOpenMWConfig}
-      />
-      <button type="button" on:click={handleSelectDirs}>Add mod</button>
-      <button type="button" on:click={handleSaveToOpenMWConfig}
-        >Update OpenMW config</button
-      >
+    <div class="mainToolbar">
+      <button type="button" on:click={handleLaunchOpenMW}>Launch OpenMW</button>
     </div>
     <section class="dataSection">
+      <div class="sectionHeading">
+        <h3>Data</h3>
+        <button type="button" on:click={handleSelectDirs}
+          >Add data folder</button
+        >
+      </div>
       <div
         class="dataList"
         use:dndzone={{ items: dataItems, flipDurationMs, type: "data" }}
@@ -163,9 +154,7 @@
             class="dataItem"
             on:contextmenu={(e) => {
               e.preventDefault();
-              menuDataToRemoveID = dataItem.id;
-              console.log({ menuDataToRemoveID });
-              dataItemMenu.popup();
+              createDataItemMenu(dataItem).popup();
             }}
           >
             <div>
@@ -177,22 +166,20 @@
               />
             </div>
             <div>
-              <h4>{dataItem.name}</h4>
-              {#if dataItem.disabled}
-                <s>{dataItem.dataFolder}</s>
-              {:else}
-                {dataItem.dataFolder}
-              {/if}
+              <span>{dataItem.name}</span>
             </div>
           </div>
         {/each}
       </div>
     </section>
-    <div class="contentToolbar">
-      <button type="button" on:click={handleSortContent}>Sort content</button>
-    </div>
     <section class="contentSection">
       {#if ready}
+        <div class="sectionHeading">
+          <h3>Content</h3>
+          <button type="button" on:click={handleSortContent}
+            >Sort content</button
+          >
+        </div>
         <div
           class="contentItemList"
           use:dndzone={{ items: contentItems, flipDurationMs, type: "content" }}
@@ -222,11 +209,7 @@
   {/if}
   <section class="logsSection">
     <h3>Logs</h3>
-    <ol style="list-style: none;" bind:this={logMessagesContainer}>
-      {#each logMessages as logMessage}
-        <li>{logMessage}</li>
-      {/each}
-    </ol>
+    <Log {logMessages} />
   </section>
 </main>
 
@@ -234,19 +217,23 @@
   .content {
     display: grid;
     grid-template-areas:
-      "data-toolbar content-toolbar"
+      "main-toolbar main-toolbar"
       "data content"
       "data logs";
     grid-template-columns: 3fr 2fr;
     grid-template-rows: auto 8fr 3fr;
     grid-gap: 24px;
     height: 100vh;
+    box-sizing: border-box;
   }
-  .dataToolbar {
-    grid-area: data-toolbar;
+  .mainToolbar {
+    grid-area: main-toolbar;
+    text-align: end;
   }
-  .contentToolbar {
-    grid-area: content-toolbar;
+  .sectionHeading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
   }
   .dataSection {
     grid-area: data;
@@ -265,13 +252,6 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-  }
-  .logsSection ol {
-    margin: 0;
-    padding: 0;
-    min-height: 0;
-    overflow-y: auto;
-    padding-bottom: 16px;
   }
   main {
     padding: 1em;
@@ -294,10 +274,6 @@
     grid-template-columns: auto 1fr;
     grid-gap: 24px;
     align-items: center;
-  }
-  .dataItem h4 {
-    margin-top: 0;
-    margin-bottom: 8px;
   }
   .dataItem:nth-of-type(even) {
     background-color: #ecf8ff;

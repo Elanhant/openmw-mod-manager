@@ -5,13 +5,15 @@
  *  - XState
  *  - immer patches
  *  - logs
- *  - prisma?
+ *  - dump logs to file
+ *  - prisma + sqlite?
  */
 
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
 const fsPromises = require("fs").promises;
 const ModManager = require("./ModManager");
+const { Logger } = require("./Logger");
 const { enableAllPlugins } = require("immer");
 
 enableAllPlugins();
@@ -28,8 +30,28 @@ if (require("electron-squirrel-startup")) {
   app.quit();
 }
 
+const logger = Logger();
+
+/** @type {ReturnType<import('./ModManager')>} */
+let modManager;
+
 const createWindow = async () => {
-  const modManager = ModManager({
+  // Create the browser window.
+  const mainWindow = new BrowserWindow({
+    // width: 800,
+    // height: 600,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      nodeIntegration: true,
+      enableRemoteModule: true,
+    },
+  });
+
+  logger.subscribe((logMessage) => {
+    mainWindow.webContents.send("log-message", logMessage);
+  });
+
+  modManager = ModManager({
     modManagerConfigPath: path.join(
       app.getPath("userData"),
       "mod_manager_config.json"
@@ -58,6 +80,26 @@ const createWindow = async () => {
       }
       throw new Error("Cannot find openmw.cfg");
     },
+    requestOpenMWLauncherPath: async () => {
+      const { response: buttonIndex } = await dialog.showMessageBox(
+        mainWindow,
+        {
+          type: "question",
+          message:
+            "Cannot find openmw-launcher.exe. Would you like to configure it?",
+          buttons: ["Cancel", "OK"],
+        }
+      );
+      if (buttonIndex === 1) {
+        const result = await dialog.showOpenDialog(mainWindow, {
+          properties: ["openFile"],
+          filters: [{ name: "openmw-launcher", extensions: ["exe"] }],
+        });
+        const filePath = result.filePaths[0];
+        return filePath;
+      }
+      throw new Error("Cannot find openmw-launcher.exe");
+    },
     requestMloxPath: async () => {
       const { response: buttonIndex } = await dialog.showMessageBox(
         mainWindow,
@@ -78,29 +120,11 @@ const createWindow = async () => {
       }
       throw new Error("Cannot find mlox.exe or mlox.py");
     },
-    logMessage,
+    logMessage: logger.log,
   });
 
+  logger.log("Initializing mod manager...");
   await modManager.init();
-
-  // Create the browser window.
-  const mainWindow = new BrowserWindow({
-    // width: 800,
-    // height: 600,
-    webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
-      nodeIntegration: true,
-      enableRemoteModule: true,
-    },
-  });
-
-  /**
-   *
-   * @param {string} message
-   */
-  function logMessage(message) {
-    mainWindow.webContents.send("log-message", message);
-  }
 
   mainWindow.maximize();
 
@@ -118,22 +142,13 @@ const createWindow = async () => {
       );
     });
 
-    logMessage("Mod manager initialized");
+    logger.log("Mod manager initialized");
 
     mainWindow.webContents.send(
       "mod-manager-ready",
       await modManager.getDataForUI()
     );
   });
-
-  /**
-   *
-   * @param {Electron.IpcMainEvent} event
-   * @param {string} filePath
-   */
-  const handleSelectOpenMWConfigFile = async (event, filePath) => {
-    modManager.updateOpenMWConfigPath(filePath);
-  };
 
   /**
    *
@@ -155,12 +170,6 @@ const createWindow = async () => {
   }
   ipcMain.on("toggle-data", handleToggleData);
 
-  ipcMain.on("select-openmw-config-file", handleSelectOpenMWConfigFile);
-
-  ipcMain.on("update-openmw-config", async () => {
-    await modManager.updateOpenMWConfig();
-  });
-
   /**
    *
    * @param {Electron.IpcMainEvent} event
@@ -179,7 +188,6 @@ const createWindow = async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ["openDirectory"],
     });
-    console.log("directories selected", result.filePaths);
     await modManager.addData(result.filePaths);
   });
 
@@ -210,6 +218,10 @@ const createWindow = async () => {
     await modManager.addData(dataFolderPaths);
   }
   ipcMain.on("drop-data-dirs", handleDropDataDirs);
+
+  ipcMain.on("launch-openmw", async function () {
+    await modManager.runOpenMW();
+  });
 };
 
 // This method will be called when Electron has finished
@@ -231,6 +243,12 @@ app.on("activate", () => {
   // dock icon is clicked and there are no other windows open.
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
+  }
+});
+
+app.on("will-quit", async () => {
+  if (modManager != null) {
+    await modManager.restoreOpenMWConfig();
   }
 });
 
