@@ -41,7 +41,19 @@
           "name": "@electron-forge/maker-rpm",
           "config": {}
         }
-      ]
+      ],
+      "publishers": {
+        "name": "@electron-forge/publisher-github",
+        "platforms": [
+          "win32"
+        ],
+        "config": {
+          "repository": {
+            "owner": "Elanhant",
+            "name": "openmw-mod-manager"
+          }
+        }
+      }
     }
   },
   "dependencies": {
@@ -56,6 +68,7 @@
     "@electron-forge/maker-rpm": "^6.0.0-beta.50",
     "@electron-forge/maker-squirrel": "^6.0.0-beta.50",
     "@electron-forge/maker-zip": "^6.0.0-beta.50",
+    "@electron-forge/publisher-github": "^6.0.0-beta.61",
     "@rollup/plugin-commonjs": "^11.0.0",
     "@rollup/plugin-node-resolve": "^7.0.0",
     "concurrently": "^5.1.0",
