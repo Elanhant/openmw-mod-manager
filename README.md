@@ -6,9 +6,9 @@ A very basic mod manager for [OpenMW](https://openmw.org/en/).
 
 Its goal is to provide a more convenient way to install, enable or sort mods (it also can run [mlox](https://github.com/mlox/mlox) if you have it installed).
 
-## Usage
+## Installation
 
-TODO
+You can download the latest release [on this page](https://github.com/Elanhant/openmw-mod-manager/releases).
 
 ## Caveats
 
