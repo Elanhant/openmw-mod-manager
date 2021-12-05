@@ -58,6 +58,15 @@
    */
   let contentItems = [];
 
+  let searchData = "";
+
+  let selectedDataID = null;
+  $: selectedContentIDs = selectedDataID
+    ? contentItems
+        .filter((contentItem) => contentItem.dataID === selectedDataID)
+        .map((contentItem) => contentItem.id)
+    : [];
+
   const flipDurationMs = 300;
   function handleDndConsiderData(e) {
     dataItems = e.detail.items;
@@ -105,6 +114,15 @@
     logMessages = logMessages.concat([message]);
   });
 
+  /* ipcRenderer.on("check-file-overrides", (event, fileToDataMap) => {
+    console.log(fileToDataMap);
+    console.log(
+      [...fileToDataMap.entries()].filter(
+        ([key, dataIDs]) => dataIDs.length > 1
+      )
+    );
+  }); */
+
   function handleSelectDirs(event) {
     event.preventDefault();
     window.postMessage({
@@ -127,6 +145,12 @@
       files.map((file) => file.path)
     );
   }
+
+  /* function handleCheckFileOverrides(e) {
+    if (e.target.checked) {
+      ipcRenderer.send("check-file-overrides");
+    }
+  } */
 </script>
 
 <svelte:body
@@ -147,19 +171,39 @@
     <section class="dataSection">
       <div class="sectionHeading">
         <h3>Data</h3>
-        <button type="button" on:click={handleSelectDirs}
-          >Add data folder</button
-        >
+        <div>
+          <!-- <label for="show_file_overrides" style="display: inline-block;">
+            <input type="checkbox" name="show_file_overrides" disabled /> Show file
+            overrides (WIP)
+          </label> -->
+          <input type="text" placeholder="Search..." bind:value={searchData} />
+          <button type="button" on:click={handleSelectDirs}
+            >Add data folder</button
+          >
+        </div>
       </div>
       <div
         class="dataList"
-        use:dndzone={{ items: dataItems, flipDurationMs, type: "data" }}
+        use:dndzone={{
+          items: dataItems,
+          flipDurationMs,
+          type: "data",
+          dragDisabled: searchData !== "",
+        }}
         on:consider={handleDndConsiderData}
         on:finalize={handleDndFinalizeData}
       >
-        {#each dataItems as dataItem (dataItem.id)}
+        {#each dataItems.filter((dataItem) => dataItem.name
+            .toLowerCase()
+            .includes(searchData.toLowerCase())) as dataItem (dataItem.id)}
           <div
             class="dataItem"
+            aria-selected={selectedDataID === dataItem.id}
+            on:click={(e) => {
+              if (e.target.tagName !== "INPUT") {
+                selectedDataID = dataItem.id;
+              }
+            }}
             on:contextmenu={(e) => {
               e.preventDefault();
               createDataItemMenu(dataItem).popup();
@@ -195,7 +239,16 @@
           on:finalize={handleDndFinalizeContent}
         >
           {#each contentItems as contentItem (contentItem.id)}
-            <div class="contentItem">
+            <div
+              class="contentItem"
+              aria-selected={selectedContentIDs.includes(contentItem.id)}
+              on:click={(e) => {
+                if (e.target.tagName !== "INPUT") {
+                  selectedDataID = contentItem.dataID;
+                  selectedContentIDs = [contentItem.id];
+                }
+              }}
+            >
               <div>
                 <input
                   type="checkbox"
@@ -286,6 +339,9 @@
   .dataItem:nth-of-type(even) {
     background-color: #ecf8ff;
   }
+  .dataItem[aria-selected="true"] {
+    background-color: #87cefa;
+  }
   .contentItemList {
     border: 1px solid lightgray;
     border-radius: 2px;
@@ -303,5 +359,8 @@
   }
   .contentItem:nth-of-type(even) {
     background-color: #ecf8ff;
+  }
+  .contentItem[aria-selected="true"] {
+    background-color: #87cefa;
   }
 </style>

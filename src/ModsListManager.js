@@ -4,7 +4,7 @@ const { produce } = require("immer");
 const { updateOrSetValuesForKey } = require("./cfg");
 
 const OPENMW_DATA_CONTENT_KEY = "data";
-const OPENMW_CFG_FALLBACK_KEY = "fallback";
+const OPENMW_CFG_FALLBACK_KEY = "fallback-archive";
 const OPENMW_CFG_CONTENT_KEY = "content";
 
 /**
@@ -124,6 +124,11 @@ const OPENMW_CFG_CONTENT_KEY = "content";
  */
 
 /**
+ * @callback checkFileOverridesFn
+ * @returns {Promise<Map<string, string[]>>}
+ */
+
+/**
  * @typedef {Object} ModsListManager
  * @property {initFn} init
  * @property {changeEventListener} addListener
@@ -137,6 +142,7 @@ const OPENMW_CFG_CONTENT_KEY = "content";
  * @property {toggleContentFn} toggleContent
  * @property {changeContentOrderFn} changeContentOrder
  * @property {applyContentOrderFromMloxFn} applyContentOrderFromMlox
+ * @property {checkFileOverridesFn} checkFileOverrides
  */
 
 /**
@@ -324,7 +330,7 @@ function ModsListManager({ configPath, logMessage }) {
             id: dataFolder,
             dataFolder,
             name: getModName(dataFolder),
-            disabled: false,
+            disabled: true,
           })),
       ];
     });
@@ -337,6 +343,31 @@ function ModsListManager({ configPath, logMessage }) {
     logMessage(`Added ${nextDataCount - prevDataCount} data folders`);
   }
 
+  /**
+   *
+   * @param {OpenMWData[]} data
+   * @returns {Promise<{ dataItem: OpenMWData, contentFileNames: string[]}[]>}
+   */
+  async function getContentFilesFromData(data) {
+    const dataPromises = data
+      .filter((dataItem) => !dataItem.disabled)
+      .map(
+        (dataItem) =>
+          new Promise((resolve) => {
+            fsPromises
+              .readdir(dataItem.dataFolder)
+              .then((fileNames) => resolve({ dataItem, fileNames }));
+          })
+      );
+
+    return (await Promise.all(dataPromises)).map(({ dataItem, fileNames }) => ({
+      dataItem,
+      contentFileNames: fileNames.filter((fileName) =>
+        CONTENT_FILE_REGEX.test(fileName)
+      ),
+    }));
+  }
+
   return {
     async init(cfg) {
       currentState = await initializeModsListManagerState();
@@ -347,29 +378,11 @@ function ModsListManager({ configPath, logMessage }) {
         const contentFromCfg =
           cfg.cfgConfigMap.get(OPENMW_CFG_CONTENT_KEY).values || new Set();
 
-        /** @type {Promise<{data: OpenMWData, fileNames: string[]}>[]} */
-        const dataPromises = currentState.data
-          .filter((data) => !data.disabled)
-          .map(
-            (data) =>
-              new Promise((resolve) => {
-                fsPromises
-                  .readdir(data.dataFolder)
-                  .then((fileNames) => resolve({ data, fileNames }));
-              })
-          );
-
-        const contentFiles = (await Promise.all(dataPromises))
-          .map(({ data, fileNames }) => ({
-            data,
-            fileNames: fileNames.filter((fileName) =>
-              CONTENT_FILE_REGEX.test(fileName)
-            ),
-          }))
-          .map(({ data, fileNames }) =>
-            fileNames.map((fileName) => ({
+        const contentFiles = (await getContentFilesFromData(currentState.data))
+          .map(({ dataItem, contentFileNames }) =>
+            contentFileNames.map((fileName) => ({
               id: fileName,
-              dataID: data.id,
+              dataID: dataItem.id,
               name: fileName,
               disabled: !contentFromCfg.has(fileName),
             }))
@@ -405,7 +418,15 @@ function ModsListManager({ configPath, logMessage }) {
       };
     },
     async getState() {
-      return currentState;
+      const contentMap = new Map(
+        // Content files from later data items will override files from earlier ones
+        currentState.content.map((contentItem) => [contentItem.id, contentItem])
+      );
+
+      return {
+        ...currentState,
+        content: [...contentMap.values()],
+      };
     },
     async changeDataOrder(nextData) {
       const nextState = produce(currentState, (draft) => {
@@ -619,7 +640,45 @@ ${currentState.content
 
       await applyStateChanges(nextState);
     },
+    async checkFileOverrides() {
+      const dataWithFiles = await Promise.all(
+        currentState.data.map((dataItem) => getFiles(dataItem.dataFolder))
+      );
+      /** @type {Map<string, string[]>} */
+      const dataFilesMap = new Map();
+      /** @type {Map<string, string[]>} */
+      const fileToDataMap = new Map();
+      for (const [dataIdx, dataFiles] of dataWithFiles.entries()) {
+        const dataID = currentState.data[dataIdx].id;
+        const dataFolder = currentState.data[dataIdx].dataFolder;
+        dataFilesMap.set(dataID, dataFiles);
+        for (const fileName of dataFiles) {
+          const relativeFilePath = path.relative(dataFolder, fileName);
+          if (!fileToDataMap.has(relativeFilePath)) {
+            fileToDataMap.set(relativeFilePath, []);
+          }
+          fileToDataMap.get(relativeFilePath).push(dataID);
+        }
+      }
+      return fileToDataMap;
+    },
   };
+}
+
+/**
+ *
+ * @param {string} dir
+ * @returns {Promise<string[]>}
+ */
+async function getFiles(dir) {
+  const dirents = await fsPromises.readdir(dir, { withFileTypes: true });
+  const files = await Promise.all(
+    dirents.map((dirent) => {
+      const res = path.resolve(dir, dirent.name);
+      return dirent.isDirectory() ? getFiles(res) : [res];
+    })
+  );
+  return files.flat();
 }
 
 module.exports = ModsListManager;

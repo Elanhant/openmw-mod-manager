@@ -464,6 +464,9 @@ function ModManager({
       await saveOpenMWConfig(updatedCfg);
       logMessage(`Successfully updated content order`);
     },
+    async checkFileOverrides() {
+      return await modsListManager.checkFileOverrides();
+    },
     restoreOpenMWConfig: restoreOpenMWConfigFromBackup,
     async runOpenMW() {
       await backupOpenMWConfig();

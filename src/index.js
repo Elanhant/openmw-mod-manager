@@ -228,6 +228,10 @@ const createWindow = async () => {
     await modManager.addData(dataFolderPaths);
   }
   ipcMain.on("drop-data-dirs", handleDropDataDirs);
+  ipcMain.on("check-file-overrides", async () => {
+    const result = await modManager.checkFileOverrides();
+    mainWindow.webContents.send("check-file-overrides", result);
+  });
 
   ipcMain.on("launch-openmw", async function () {
     await modManager.runOpenMW();
