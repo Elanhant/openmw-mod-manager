@@ -8,7 +8,7 @@ const util = require("util");
 
 const TEMP_GAME_FILES_INI_FILENAME = "game_files.ini";
 
-/** @typedef {"openMWConfigPath"|"openMWLauncherPath"|"mloxPath"} ModManagerConfigKey */
+/** @typedef {"openMWConfigPath"|"openMWLauncherPath"|"mloxPath"|"omwllfPath"} ModManagerConfigKey */
 
 /**
  * @typedef {Object.<ModManagerConfigKey, string>} ModManagerConfig
@@ -82,19 +82,7 @@ async function saveModManagerConfig(configPath, config) {
 
 /**
  * @async
- * @callback requestOpenMWConfigPath
- * @returns {Promise<string>}
- */
-
-/**
- * @async
- * @callback requestOpenMWLauncherPath
- * @returns {Promise<string>}
- */
-
-/**
- * @async
- * @callback requestMloxPath
+ * @callback requestFilePath
  * @returns {Promise<string>}
  */
 
@@ -103,10 +91,12 @@ async function saveModManagerConfig(configPath, config) {
  * @typedef {Object} ModManagerOptions
  * @property {string} modManagerConfigPath
  * @property {string} modsListManagerConfigPath
+ * @property {string} appDataPath
  * @property {string} tempDirPath
- * @property {requestOpenMWConfigPath} requestOpenMWConfigPath
- * @property {requestOpenMWLauncherPath} requestOpenMWLauncherPath
- * @property {requestMloxPath} requestMloxPath
+ * @property {requestFilePath} requestOpenMWConfigPath
+ * @property {requestFilePath} requestOpenMWLauncherPath
+ * @property {requestFilePath} requestMloxPath
+ * @property {requestFilePath} requestOMWLLFPath
  * @property {ReturnType<import('./Logger').Logger>['log']} logMessage
  */
 
@@ -117,10 +107,12 @@ async function saveModManagerConfig(configPath, config) {
 function ModManager({
   modManagerConfigPath,
   modsListManagerConfigPath,
+  appDataPath,
   tempDirPath,
   requestOpenMWConfigPath,
   requestOpenMWLauncherPath,
   requestMloxPath,
+  requestOMWLLFPath,
   logMessage,
 }) {
   /** @type {ModManagerConfig | null} */
@@ -183,6 +175,14 @@ function ModManager({
    */
   async function updateMloxPath(newPath) {
     setModManagerConfigValue("mloxPath", newPath);
+    await saveModManagerConfig(modManagerConfigPath, modManagerConfig);
+  }
+  /**
+   *
+   * @param {string} newPath
+   */
+  async function updateOMWLLFPath(newPath) {
+    setModManagerConfigValue("omwllfPath", newPath);
     await saveModManagerConfig(modManagerConfigPath, modManagerConfig);
   }
 
@@ -335,6 +335,25 @@ function ModManager({
     return gameFiles;
   }
 
+  /**
+   * @returns {Promise<string>}
+   */
+  async function getOMWLLFExecutablePath() {
+    const omwllfPath = getModManagerConfigValue("omwllfPath");
+
+    let executablePath;
+
+    try {
+      await fsPromises.access(omwllfPath);
+      executablePath = omwllfPath;
+    } catch (e) {
+      executablePath = await requestOMWLLFPath();
+      await updateOMWLLFPath(executablePath);
+    }
+
+    return executablePath;
+  }
+
   return {
     async init() {
       modManagerConfig = await getModManagerConfig(modManagerConfigPath);
@@ -485,6 +504,78 @@ function ModManager({
       } finally {
         await restoreOpenMWConfigFromBackup();
       }
+    },
+    async runOMWLLF() {
+      await backupOpenMWConfig();
+
+      const omwllfExecutablePath = await getOMWLLFExecutablePath();
+
+      const cfg = await parseOpenMWConfig();
+      const updatedCfg = await modsListManager.applyChangesToCfg(cfg);
+      await saveOpenMWConfig(updatedCfg);
+
+      const omwllfModName = `OMWLLFMod.omwaddon`;
+
+      const modsPath = path.join(appDataPath, "mods");
+      const omwllfDataFolder = path.join(modsPath, "OMWLLF");
+      const omwllfDataID = omwllfDataFolder;
+
+      try {
+        await fsPromises.access(modsPath);
+      } catch {
+        await fsPromises.mkdir(modsPath);
+      }
+      try {
+        await fsPromises.access(omwllfDataFolder);
+      } catch {
+        await fsPromises.mkdir(omwllfDataFolder);
+      }
+
+      const promisifyOMWLLF = () => {
+        return new Promise((resolve, reject) => {
+          const process = require("child_process").spawn("python", [
+            omwllfExecutablePath,
+            "--modname",
+            omwllfModName,
+            "--moddir",
+            omwllfDataFolder,
+          ]);
+
+          let errorMessage = "";
+
+          process.stdout.on("data", (data) => {
+            logMessage(data.toString());
+            console.log(data.toString());
+          });
+          process.stderr.on("data", (data) => {
+            errorMessage += data.toString();
+            console.error(data.toString());
+          });
+          process.stdout.on("end", () => {
+            if (errorMessage === "") {
+              resolve();
+            } else {
+              reject(new Error(errorMessage));
+            }
+          });
+        });
+      };
+
+      try {
+        logMessage("Running OMWLLF...");
+        await promisifyOMWLLF();
+      } catch (e) {
+        logMessage("Failed to run OMWLLF", LogLevel.Error, e);
+      } finally {
+        await restoreOpenMWConfigFromBackup();
+      }
+
+      try {
+        await modsListManager.removeData(omwllfDataID);
+      } catch {}
+
+      await modsListManager.addData([omwllfDataFolder]);
+      await modsListManager.toggleData(omwllfDataID);
     },
   };
 }

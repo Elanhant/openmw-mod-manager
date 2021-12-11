@@ -32,6 +32,35 @@ if (require("electron-squirrel-startup")) {
 
 const logger = Logger();
 
+const logFilePath = path.join(
+  app.getPath("userData"),
+  "openmw-mod-manager.log"
+);
+
+async function setupLogFile() {
+  try {
+    // Clear logs from previous run before subscribing
+    await fsPromises.unlink(logFilePath);
+  } catch {}
+
+  const logStream = require("fs").createWriteStream(logFilePath, {
+    flags: "a",
+  });
+
+  logger.subscribe(async (logMessage) => {
+    logStream.write(
+      `[${new Date(logMessage.timestamp).toISOString()}] ${logMessage.level}: ${
+        logMessage.message
+      }\n`
+    );
+    if (logMessage.error) {
+      logStream.write(`${logMessage.error.message}\n`);
+    }
+  });
+}
+
+setupLogFile();
+
 /** @type {ReturnType<import('./ModManager')>} */
 let modManager;
 
@@ -48,7 +77,9 @@ const createWindow = async () => {
   });
 
   logger.subscribe((logMessage) => {
-    mainWindow.webContents.send("log-message", logMessage);
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send("log-message", logMessage);
+    }
   });
 
   modManager = ModManager({
@@ -61,6 +92,7 @@ const createWindow = async () => {
       "mods_list_manager_config.json"
     ),
     tempDirPath: app.getPath("temp"),
+    appDataPath: app.getPath("userData"),
     requestOpenMWConfigPath: async () => {
       const { response: buttonIndex } = await dialog.showMessageBox(
         mainWindow,
@@ -119,6 +151,25 @@ const createWindow = async () => {
         return filePath;
       }
       throw new Error("Cannot find mlox.exe or mlox.py");
+    },
+    requestOMWLLFPath: async () => {
+      const { response: buttonIndex } = await dialog.showMessageBox(
+        mainWindow,
+        {
+          type: "question",
+          message: "Cannot find OMWLLF. Would you like to configure it?",
+          buttons: ["Cancel", "OK"],
+        }
+      );
+      if (buttonIndex === 1) {
+        const result = await dialog.showOpenDialog(mainWindow, {
+          properties: ["openFile"],
+          filters: [{ name: "omwllf", extensions: ["py"] }],
+        });
+        const filePath = result.filePaths[0];
+        return filePath;
+      }
+      throw new Error("Cannot find omwllf.py");
     },
     logMessage: logger.log,
   });
@@ -231,6 +282,10 @@ const createWindow = async () => {
   ipcMain.on("check-file-overrides", async () => {
     const result = await modManager.checkFileOverrides();
     mainWindow.webContents.send("check-file-overrides", result);
+  });
+
+  ipcMain.on("run-omwllf", async function () {
+    await modManager.runOMWLLF();
   });
 
   ipcMain.on("launch-openmw", async function () {

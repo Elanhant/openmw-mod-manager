@@ -483,6 +483,9 @@ function ModsListManager({ configPath, logMessage }) {
     async removeData(dataID) {
       const nextState = produce(currentState, (draft) => {
         draft.data = draft.data.filter((dataItem) => dataItem.id !== dataID);
+        draft.content = draft.content.filter(
+          (contentItem) => contentItem.dataID !== dataID
+        );
       });
 
       const removedDataItem = currentState.data.find(

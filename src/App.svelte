@@ -59,6 +59,7 @@
   let contentItems = [];
 
   let searchData = "";
+  let searchContent = "";
 
   let selectedDataID = null;
   $: selectedContentIDs = selectedDataID
@@ -101,6 +102,10 @@
 
   function handleLaunchOpenMW() {
     ipcRenderer.send("launch-openmw");
+  }
+
+  function handleRunOMWLLF() {
+    ipcRenderer.send("run-omwllf");
   }
 
   ipcRenderer.on("mod-manager-ready", (event, { data, content }) => {
@@ -166,6 +171,7 @@
 <main class="content">
   {#if ready}
     <div class="mainToolbar">
+      <button type="button" on:click={handleRunOMWLLF}>Run OMWLLF</button>
       <button type="button" on:click={handleLaunchOpenMW}>Launch OpenMW</button>
     </div>
     <section class="dataSection">
@@ -228,9 +234,16 @@
       {#if ready}
         <div class="sectionHeading">
           <h3>Content</h3>
-          <button type="button" on:click={handleSortContent}
-            >Sort content</button
-          >
+          <div>
+            <input
+              type="text"
+              placeholder="Search..."
+              bind:value={searchContent}
+            />
+            <button type="button" on:click={handleSortContent}
+              >Sort content</button
+            >
+          </div>
         </div>
         <div
           class="contentItemList"
@@ -238,7 +251,9 @@
           on:consider={handleDndConsiderContent}
           on:finalize={handleDndFinalizeContent}
         >
-          {#each contentItems as contentItem (contentItem.id)}
+          {#each contentItems.filter((contentItem) => contentItem.name
+              .toLowerCase()
+              .includes(searchContent.toLowerCase())) as contentItem (contentItem.id)}
             <div
               class="contentItem"
               aria-selected={selectedContentIDs.includes(contentItem.id)}
