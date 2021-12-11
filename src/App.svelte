@@ -108,6 +108,10 @@
     ipcRenderer.send("run-omwllf");
   }
 
+  function handleRunDeltaPlugin() {
+    ipcRenderer.send("run-delta-plugin");
+  }
+
   ipcRenderer.on("mod-manager-ready", (event, { data, content }) => {
     dataItems = data;
     contentItems = content;
@@ -172,6 +176,9 @@
   {#if ready}
     <div class="mainToolbar">
       <button type="button" on:click={handleRunOMWLLF}>Run OMWLLF</button>
+      <button type="button" on:click={handleRunDeltaPlugin}
+        >Run DeltaPlugin</button
+      >
       <button type="button" on:click={handleLaunchOpenMW}>Launch OpenMW</button>
     </div>
     <section class="dataSection">

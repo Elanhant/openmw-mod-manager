@@ -8,7 +8,7 @@ const util = require("util");
 
 const TEMP_GAME_FILES_INI_FILENAME = "game_files.ini";
 
-/** @typedef {"openMWConfigPath"|"openMWLauncherPath"|"mloxPath"|"omwllfPath"} ModManagerConfigKey */
+/** @typedef {"openMWConfigPath"|"openMWLauncherPath"|"mloxPath"|"omwllfPath"|"deltaPluginPath"} ModManagerConfigKey */
 
 /**
  * @typedef {Object.<ModManagerConfigKey, string>} ModManagerConfig
@@ -97,6 +97,7 @@ async function saveModManagerConfig(configPath, config) {
  * @property {requestFilePath} requestOpenMWLauncherPath
  * @property {requestFilePath} requestMloxPath
  * @property {requestFilePath} requestOMWLLFPath
+ * @property {requestFilePath} requestDeltaPluginPath
  * @property {ReturnType<import('./Logger').Logger>['log']} logMessage
  */
 
@@ -113,6 +114,7 @@ function ModManager({
   requestOpenMWLauncherPath,
   requestMloxPath,
   requestOMWLLFPath,
+  requestDeltaPluginPath,
   logMessage,
 }) {
   /** @type {ModManagerConfig | null} */
@@ -183,6 +185,14 @@ function ModManager({
    */
   async function updateOMWLLFPath(newPath) {
     setModManagerConfigValue("omwllfPath", newPath);
+    await saveModManagerConfig(modManagerConfigPath, modManagerConfig);
+  }
+  /**
+   *
+   * @param {string} newPath
+   */
+  async function updateDeltaPluginPath(newPath) {
+    setModManagerConfigValue("deltaPluginPath", newPath);
     await saveModManagerConfig(modManagerConfigPath, modManagerConfig);
   }
 
@@ -271,13 +281,13 @@ function ModManager({
    * @returns {Promise<string>}
    */
   async function getOpenMWLauncherPath() {
-    const openMWLauncherPath = getModManagerConfigValue("openMWLauncherPath");
+    const pathFromConfig = getModManagerConfigValue("openMWLauncherPath");
 
     let executablePath;
 
     try {
-      await fsPromises.access(openMWLauncherPath);
-      executablePath = openMWLauncherPath;
+      await fsPromises.access(pathFromConfig);
+      executablePath = pathFromConfig;
     } catch (e) {
       executablePath = await requestOpenMWLauncherPath();
       await updateOpenMWLauncherPath(executablePath);
@@ -290,13 +300,13 @@ function ModManager({
    * @returns {Promise<string>}
    */
   async function getMloxExecutablePath() {
-    const mloxPath = getModManagerConfigValue("mloxPath");
+    const pathFromConfig = getModManagerConfigValue("mloxPath");
 
     let executablePath;
 
     try {
-      await fsPromises.access(mloxPath);
-      executablePath = mloxPath;
+      await fsPromises.access(pathFromConfig);
+      executablePath = pathFromConfig;
     } catch (e) {
       executablePath = await requestMloxPath();
       await updateMloxPath(executablePath);
@@ -339,13 +349,13 @@ function ModManager({
    * @returns {Promise<string>}
    */
   async function getOMWLLFExecutablePath() {
-    const omwllfPath = getModManagerConfigValue("omwllfPath");
+    const pathFromConfig = getModManagerConfigValue("omwllfPath");
 
     let executablePath;
 
     try {
-      await fsPromises.access(omwllfPath);
-      executablePath = omwllfPath;
+      await fsPromises.access(pathFromConfig);
+      executablePath = pathFromConfig;
     } catch (e) {
       executablePath = await requestOMWLLFPath();
       await updateOMWLLFPath(executablePath);
@@ -353,6 +363,35 @@ function ModManager({
 
     return executablePath;
   }
+
+  /**
+   * @returns {Promise<string>}
+   */
+  async function getDeltaPluginExecutablePath() {
+    const pathFromConfig = getModManagerConfigValue("deltaPluginPath");
+
+    let executablePath;
+
+    try {
+      await fsPromises.access(pathFromConfig);
+      executablePath = pathFromConfig;
+    } catch (e) {
+      executablePath = await requestDeltaPluginPath();
+      await updateDeltaPluginPath(executablePath);
+    }
+
+    return executablePath;
+  }
+
+  const modsPath = path.join(appDataPath, "mods");
+
+  const omwllfDataFolder = path.join(modsPath, "OMWLLF");
+  const omwllfDataID = omwllfDataFolder;
+  const omwllfModName = `OMWLLFMod.omwaddon`;
+
+  const deltaPluginDataFolder = path.join(modsPath, "DeltaPlugin");
+  const deltaPluginDataID = deltaPluginDataFolder;
+  const deltaPluginModName = `DeltaPluginMerged.omwaddon`;
 
   return {
     async init() {
@@ -514,12 +553,6 @@ function ModManager({
       const updatedCfg = await modsListManager.applyChangesToCfg(cfg);
       await saveOpenMWConfig(updatedCfg);
 
-      const omwllfModName = `OMWLLFMod.omwaddon`;
-
-      const modsPath = path.join(appDataPath, "mods");
-      const omwllfDataFolder = path.join(modsPath, "OMWLLF");
-      const omwllfDataID = omwllfDataFolder;
-
       try {
         await fsPromises.access(modsPath);
       } catch {
@@ -576,6 +609,71 @@ function ModManager({
 
       await modsListManager.addData([omwllfDataFolder]);
       await modsListManager.toggleData(omwllfDataID);
+    },
+    async runDeltaPlugin() {
+      await backupOpenMWConfig();
+
+      const deltaPluginExecutablePath = await getDeltaPluginExecutablePath();
+
+      const currentState = await modsListManager.getState();
+      const enabledOMWLLFContentItems = currentState.content.filter(
+        (contentItem) =>
+          contentItem.dataID === omwllfDataID && contentItem.disabled === false
+      );
+
+      if (enabledOMWLLFContentItems.length > 0) {
+        logMessage("Temporarily disabling OMWLLFMod...");
+        await Promise.all(
+          enabledOMWLLFContentItems.map((contentItem) =>
+            modsListManager.toggleContent(contentItem.id)
+          )
+        );
+      }
+
+      const cfg = await parseOpenMWConfig();
+      const updatedCfg = await modsListManager.applyChangesToCfg(cfg);
+      await saveOpenMWConfig(updatedCfg);
+
+      try {
+        await fsPromises.access(modsPath);
+      } catch {
+        await fsPromises.mkdir(modsPath);
+      }
+      try {
+        await fsPromises.access(deltaPluginDataFolder);
+      } catch {
+        await fsPromises.mkdir(deltaPluginDataFolder);
+      }
+
+      const execFile = util.promisify(require("child_process").execFile);
+
+      try {
+        logMessage("Running DeltaPlugin...");
+        await execFile(deltaPluginExecutablePath, [
+          "merge",
+          path.join(deltaPluginDataFolder, deltaPluginModName),
+        ]);
+        logMessage("Successfully run DeltaPlugin!");
+      } catch (e) {
+        logMessage("Failed to run DeltaPlugin", LogLevel.Error, e);
+      } finally {
+        await restoreOpenMWConfigFromBackup();
+        if (enabledOMWLLFContentItems.length > 0) {
+          logMessage("Enabling previously disabled OMWLLFMod...");
+          await Promise.all(
+            enabledOMWLLFContentItems.map((contentItem) =>
+              modsListManager.toggleContent(contentItem.id)
+            )
+          );
+        }
+      }
+
+      try {
+        await modsListManager.removeData(deltaPluginDataID);
+      } catch {}
+
+      await modsListManager.addData([deltaPluginDataFolder]);
+      await modsListManager.toggleData(deltaPluginDataID);
     },
   };
 }

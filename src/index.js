@@ -171,6 +171,25 @@ const createWindow = async () => {
       }
       throw new Error("Cannot find omwllf.py");
     },
+    requestDeltaPluginPath: async () => {
+      const { response: buttonIndex } = await dialog.showMessageBox(
+        mainWindow,
+        {
+          type: "question",
+          message: "Cannot find DeltaPlugin. Would you like to configure it?",
+          buttons: ["Cancel", "OK"],
+        }
+      );
+      if (buttonIndex === 1) {
+        const result = await dialog.showOpenDialog(mainWindow, {
+          properties: ["openFile"],
+          filters: [{ name: "delta-plugin", extensions: ["exe"] }],
+        });
+        const filePath = result.filePaths[0];
+        return filePath;
+      }
+      throw new Error("Cannot find delta-plugin.exe");
+    },
     logMessage: logger.log,
   });
 
@@ -286,6 +305,10 @@ const createWindow = async () => {
 
   ipcMain.on("run-omwllf", async function () {
     await modManager.runOMWLLF();
+  });
+
+  ipcMain.on("run-delta-plugin", async function () {
+    await modManager.runDeltaPlugin();
   });
 
   ipcMain.on("launch-openmw", async function () {
