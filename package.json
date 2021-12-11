@@ -1,7 +1,7 @@
 {
   "name": "openmw-mod-manager",
   "productName": "openmw-mod-manager",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A very basic mod manager for OpenMW",
   "main": "src/index.js",
   "scripts": {
