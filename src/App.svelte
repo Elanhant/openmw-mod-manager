@@ -1,6 +1,7 @@
 <script>
-  import { dndzone } from "svelte-dnd-action";
+  import { dndzone, SOURCES, TRIGGERS } from "svelte-dnd-action";
   import Log from "./components/Log.svelte";
+  import { tick } from "svelte";
   /** @type {Electron} */
   const electron = window.require("electron");
 
@@ -23,17 +24,54 @@
     });
     dataItemMenu.append(dataItemMenuItemOpenDir);
 
+    let dataIDsToRemove = [dataItem.id];
+
+    if (
+      Object.keys(selectedDataItems).length > 0 &&
+      selectedDataItems[dataItem.id] != null
+    ) {
+      dataIDsToRemove = Object.values(selectedDataItems).map(
+        (selectedDataItem) => selectedDataItem.id
+      );
+    }
+
     const dataItemMenuItemRemove = new MenuItem({
       label: "Remove data files...",
       click: () => {
         if (
-          window.confirm(`Are you sure you want to remove ${dataItem.name}?`)
+          window.confirm(
+            `Are you sure you want to remove ${
+              dataIDsToRemove.length === 1
+                ? dataItem.name
+                : `${dataIDsToRemove.length} mod(s)`
+            }?`
+          )
         ) {
-          ipcRenderer.send("remove-data", dataItem.id);
+          ipcRenderer.send("remove-data", dataIDsToRemove);
         }
       },
     });
     dataItemMenu.append(dataItemMenuItemRemove);
+
+    const moveUpBy50 = new MenuItem({
+      label: "Move up by 50",
+      click: () => {
+        const currentIdx = dataItems.indexOf(dataItem);
+        const newIdx = Math.max(currentIdx - 50, 1);
+        const newDataItems = [];
+        for (let i = 0; i < dataItems.length; i++) {
+          if (i === newIdx) {
+            newDataItems.push(dataItem);
+          } else if (i === currentIdx) {
+            continue;
+          }
+          newDataItems.push(dataItems[i]);
+        }
+        dataItems = newDataItems;
+        ipcRenderer.send("reorder-data", dataItems);
+      },
+    });
+    dataItemMenu.append(moveUpBy50);
     return dataItemMenu;
   }
 
@@ -46,6 +84,7 @@
    * @type {import('./ModsListManager.js').OpenMWData[]}
    */
   let dataItems = [];
+
   /**
    * @type {Map<string, string>}
    */
@@ -61,19 +100,110 @@
   let searchData = "";
   let searchContent = "";
 
+  /**
+   * @typedef {Object} SelectedDataItem
+   * @property {string} id
+   * @property {number} idx
+   * @property {import('./ModsListManager.js').OpenMWData[]} data
+   */
+
+  /**
+   * @type {Object.<string,SelectedDataItem>}
+   */
+  let selectedDataItems = {};
+  let minSelectedIdx = Infinity;
+  let maxSelectedIdx = -1;
+
+  function resetSelectedDataItems() {
+    selectedDataItems = {};
+    minSelectedIdx = Infinity;
+    maxSelectedIdx = -1;
+  }
+
   let selectedDataID = null;
-  $: selectedContentIDs = selectedDataID
-    ? contentItems
-        .filter((contentItem) => contentItem.dataID === selectedDataID)
-        .map((contentItem) => contentItem.id)
-    : [];
+  $: selectedContentIDs =
+    Object.keys(selectedDataItems).length > 0
+      ? contentItems
+          .filter(
+            (contentItem) => selectedDataItems[contentItem.dataID] != null
+          )
+          .map((contentItem) => contentItem.id)
+      : [];
 
   const flipDurationMs = 300;
   function handleDndConsiderData(e) {
-    dataItems = e.detail.items;
+    const {
+      items: newDataItems,
+      info: { trigger, source, id },
+    } = e.detail;
+    if (source !== SOURCES.KEYBOARD) {
+      if (
+        Object.keys(selectedDataItems).length > 0 &&
+        trigger === TRIGGERS.DRAG_STARTED
+      ) {
+        if (selectedDataItems[id] != null) {
+          selectedDataItems = { ...selectedDataItems };
+          tick().then(() => {
+            dataItems = newDataItems.filter(
+              (item) => selectedDataItems[item.id] == null
+            );
+          });
+        } else {
+          resetSelectedDataItems();
+        }
+      }
+    }
+    if (trigger === TRIGGERS.DRAG_STOPPED) {
+      resetSelectedDataItems();
+    }
+
+    dataItems = newDataItems;
   }
   function handleDndFinalizeData(e) {
-    dataItems = e.detail.items;
+    let {
+      items: newDataItems,
+      info: { trigger, source, id },
+    } = e.detail;
+    const temp = { ...selectedDataItems };
+
+    if (Object.keys(selectedDataItems).length > 0) {
+      if (trigger === TRIGGERS.DROPPED_INTO_ANOTHER) {
+        dataItems = newDataItems.filter(
+          (item) => selectedDataItems[item.id] == null
+        );
+      } else if (
+        trigger === TRIGGERS.DROPPED_INTO_ZONE ||
+        trigger === TRIGGERS.DROPPED_OUTSIDE_OF_ANY
+      ) {
+        tick().then(() => {
+          const idx = newDataItems.findIndex((item) => item.id === id);
+          // to support arrow up when keyboard dragging
+          const sidx = Math.max(
+            Object.values(selectedDataItems).findIndex(
+              (item) => item.id === id
+            ),
+            0
+          );
+          newDataItems = newDataItems.filter(
+            (item) => selectedDataItems[item.id] == null
+          );
+          newDataItems.splice(
+            idx - sidx,
+            0,
+            ...Object.values(selectedDataItems)
+              .sort((a, b) => a.idx - b.idx)
+              .map((selectedDataItem) => selectedDataItem.data)
+          );
+          dataItems = newDataItems;
+
+          if (source !== SOURCES.KEYBOARD) {
+            resetSelectedDataItems();
+          }
+        });
+      }
+    } else {
+      dataItems = newDataItems;
+    }
     ipcRenderer.send("reorder-data", dataItems);
   }
   function handleDndConsiderContent(e) {
@@ -113,7 +243,9 @@
   }
 
   ipcRenderer.on("mod-manager-ready", (event, { data, content }) => {
-    dataItems = data;
+    dataItems = Array.from(
+      new Map(data.map((dataItem) => [dataItem.id, dataItem])).values()
+    );
     contentItems = content;
     ready = true;
   });
@@ -147,12 +279,57 @@
   /**
    *
    * @param {File[]} files
+   * @param {?number} insertIdx
    */
-  function addBulkData(files) {
+  function addBulkData(files, insertIdx) {
     ipcRenderer.send(
       "drop-data-dirs",
-      files.map((file) => file.path)
+      files.map((file) => file.path),
+      insertIdx
     );
+  }
+
+  function selectItem(idx) {
+    const dataItem = dataItems[idx];
+    selectedDataItems[dataItem.id] = {
+      id: dataItem.id,
+      idx,
+      data: dataItem,
+    };
+    if (idx < minSelectedIdx) {
+      minSelectedIdx = idx;
+    }
+    if (idx > maxSelectedIdx) {
+      maxSelectedIdx = idx;
+    }
+  }
+
+  function selectItemByID(id) {
+    const idx = dataItems.findIndex((item) => item.id === id);
+    selectItem(idx);
+  }
+
+  function handleMaybeSelect(id, e) {
+    if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      resetSelectedDataItems();
+      return;
+    }
+    if (e.key && e.key !== "Shift") {
+      resetSelectedDataItems();
+      return;
+    }
+
+    if (selectedDataItems[id] != null) {
+      delete selectedDataItems[id];
+    } else {
+      selectItemByID(id);
+      if (e.shiftKey && Object.keys(selectedDataItems).length > 0) {
+        for (let i = minSelectedIdx; i < maxSelectedIdx; i++) {
+          selectItem(i);
+        }
+      }
+    }
+    selectedDataItems = { ...selectedDataItems };
   }
 
   /* function handleCheckFileOverrides(e) {
@@ -169,8 +346,19 @@
   on:drop={(e) => {
     e.preventDefault();
     e.stopPropagation();
-    addBulkData([...e.dataTransfer.items].map((item) => item.getAsFile()));
-  }} />
+    const dataItemEl = e.target.closest("[data-dataitemid]");
+    let insertIdx = null;
+    if (dataItemEl) {
+      insertIdx = dataItems.findIndex(
+        (dataItem) => dataItem.id === dataItemEl.dataset["dataitemid"]
+      );
+    }
+    addBulkData(
+      [...e.dataTransfer.items].map((item) => item.getAsFile()),
+      insertIdx
+    );
+  }}
+/>
 
 <main class="content">
   {#if ready}
@@ -183,7 +371,7 @@
     </div>
     <section class="dataSection">
       <div class="sectionHeading">
-        <h3>Data</h3>
+        <h3>Data ({dataItems.length})</h3>
         <div>
           <!-- <label for="show_file_overrides" style="display: inline-block;">
             <input type="checkbox" name="show_file_overrides" disabled /> Show file
@@ -208,13 +396,14 @@
       >
         {#each dataItems.filter((dataItem) => dataItem.name
             .toLowerCase()
-            .includes(searchData.toLowerCase())) as dataItem (dataItem.id)}
+            .includes(searchData.toLowerCase())) as dataItem, dataItemIdx (dataItem.id)}
           <div
             class="dataItem"
-            aria-selected={selectedDataID === dataItem.id}
+            aria-selected={selectedDataItems[dataItem.id] != null}
+            data-dataitemid={dataItem.id}
             on:click={(e) => {
               if (e.target.tagName !== "INPUT") {
-                selectedDataID = dataItem.id;
+                handleMaybeSelect(dataItem.id, e);
               }
             }}
             on:contextmenu={(e) => {
@@ -222,6 +411,9 @@
               createDataItemMenu(dataItem).popup();
             }}
           >
+            <div>
+              <small>{dataItems.indexOf(dataItem) + 1}</small>
+            </div>
             <div>
               <input
                 type="checkbox"
@@ -266,7 +458,7 @@
               aria-selected={selectedContentIDs.includes(contentItem.id)}
               on:click={(e) => {
                 if (e.target.tagName !== "INPUT") {
-                  selectedDataID = contentItem.dataID;
+                  selectItemByID(contentItem.dataID);
                   selectedContentIDs = [contentItem.id];
                 }
               }}
@@ -354,7 +546,7 @@
   .dataItem {
     padding: 16px 24px;
     display: grid;
-    grid-template-columns: auto 1fr;
+    grid-template-columns: 40px auto 1fr;
     grid-gap: 24px;
     align-items: center;
   }

@@ -69,6 +69,7 @@ const OPENMW_CFG_CONTENT_KEY = "content";
  * @async
  * @callback addDataFn
  * @param {string[]} dataFolderPaths
+ * @param {?number} insertIdx
  * @returns {Promise<void>}
  */
 
@@ -313,26 +314,30 @@ function ModsListManager({ configPath, logMessage }) {
   const ARCHIVE_FILE_REGEX = /\.(bsa)$/i;
   const CONTENT_FILE_REGEX = /\.(esp|esm|omwaddon)$/i;
   const OMWADDON_FILE_REGEX = /\.omwaddon$/i;
+  const ESM_FILE_REGEX = /\.esm$/i;
 
   /** @type {addDataFn} */
-  async function addData(dataFolderPaths) {
+  async function addData(dataFolderPaths, insertIdx) {
     const nextState = produce(currentState, (draft) => {
-      draft.data = [
-        ...draft.data,
-        ...dataFolderPaths
-          .filter(
-            (dataFolderPath) =>
-              !draft.data.some(
-                (currentMod) => currentMod.dataFolder === dataFolderPath
-              )
-          )
-          .map((dataFolder) => ({
-            id: dataFolder,
-            dataFolder,
-            name: getModName(dataFolder),
-            disabled: true,
-          })),
-      ];
+      const newDataItems = dataFolderPaths
+        .filter(
+          (dataFolderPath) =>
+            !draft.data.some(
+              (currentMod) => currentMod.dataFolder === dataFolderPath
+            )
+        )
+        .map((dataFolder) => ({
+          id: dataFolder,
+          dataFolder,
+          name: getModName(dataFolder),
+          disabled: true,
+        }));
+
+      if (insertIdx == null) {
+        insertIdx = draft.data.length;
+      }
+
+      draft.data.splice(insertIdx, 0, ...newDataItems);
     });
 
     const prevDataCount = currentState.data.length;
@@ -632,6 +637,16 @@ ${currentState.content
             }
           } else if (OMWADDON_FILE_REGEX.test(fileB)) {
             return -1;
+          } else if (
+            ESM_FILE_REGEX.test(fileA) &&
+            !ESM_FILE_REGEX.test(fileB)
+          ) {
+            return -1;
+          } else if (
+            !ESM_FILE_REGEX.test(fileA) &&
+            ESM_FILE_REGEX.test(fileB)
+          ) {
+            return 1;
           }
 
           const updatedOrderPositionA = updatedOrderMap[fileA] || 0;

@@ -268,16 +268,16 @@ const createWindow = async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ["openDirectory"],
     });
-    await modManager.addData(result.filePaths);
+    await modManager.addData(result.filePaths, null);
   });
 
   /**
    *
    * @param {Electron.IpcMainEvent} event
-   * @param {string} dataID
+   * @param {string[]} dataIDs
    */
-  async function handleRemoveData(event, dataID) {
-    await modManager.removeData(dataID);
+  async function handleRemoveData(event, dataIDs) {
+    await modManager.removeData(dataIDs);
   }
   ipcMain.on("remove-data", handleRemoveData);
 
@@ -285,8 +285,9 @@ const createWindow = async () => {
    *
    * @param {Electron.IpcMainEvent} event
    * @param {string[]} filePaths
+   * @param {?number} insertIdx
    */
-  async function handleDropDataDirs(event, filePaths) {
+  async function handleDropDataDirs(event, filePaths, insertIdx) {
     const isFolderList = (
       await Promise.all(filePaths.map((filePath) => fsPromises.lstat(filePath)))
     ).map((stat) => stat.isDirectory());
@@ -295,7 +296,7 @@ const createWindow = async () => {
       .filter((_file, idx) => isFolderList[idx] === true)
       .sort();
 
-    await modManager.addData(dataFolderPaths);
+    await modManager.addData(dataFolderPaths, insertIdx);
   }
   ipcMain.on("drop-data-dirs", handleDropDataDirs);
   ipcMain.on("check-file-overrides", async () => {

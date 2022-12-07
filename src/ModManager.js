@@ -426,12 +426,13 @@ function ModManager({
     /**
      *
      * @param {string[]} dataFolderPaths
+     * @param {?number} insertIdx
      */
-    async addData(dataFolderPaths) {
+    async addData(dataFolderPaths, insertIdx) {
       if (modsListManager == null) {
         throw new Error("modsListManager is not initialized!");
       }
-      await modsListManager.addData(dataFolderPaths);
+      await modsListManager.addData(dataFolderPaths, insertIdx);
     },
     /**
      *
@@ -457,14 +458,16 @@ function ModManager({
     },
     /**
      *
-     * @param {string} dataID
+     * @param {string[]} dataIDs
      */
-    async removeData(dataID) {
+    async removeData(dataIDs) {
       if (modsListManager == null) {
         throw new Error("modsListManager is not initialized!");
       }
 
-      await modsListManager.removeData(dataID);
+      for (const dataID of dataIDs) {
+        await modsListManager.removeData(dataID);
+      }
     },
     /**
      *
@@ -549,6 +552,21 @@ function ModManager({
 
       const omwllfExecutablePath = await getOMWLLFExecutablePath();
 
+      const currentState = await modsListManager.getState();
+      const enabledOMWLLFContentItems = currentState.content.filter(
+        (contentItem) =>
+          contentItem.dataID === omwllfDataID && contentItem.disabled === false
+      );
+
+      if (enabledOMWLLFContentItems.length > 0) {
+        logMessage("Disabling previous OMWLLF content...");
+        await Promise.all(
+          enabledOMWLLFContentItems.map((contentItem) =>
+            modsListManager.toggleContent(contentItem.id)
+          )
+        );
+      }
+
       const cfg = await parseOpenMWConfig();
       const updatedCfg = await modsListManager.applyChangesToCfg(cfg);
       await saveOpenMWConfig(updatedCfg);
@@ -625,6 +643,20 @@ function ModManager({
         logMessage("Temporarily disabling OMWLLFMod...");
         await Promise.all(
           enabledOMWLLFContentItems.map((contentItem) =>
+            modsListManager.toggleContent(contentItem.id)
+          )
+        );
+      }
+      const enabledDeltaPluginContentItems = currentState.content.filter(
+        (contentItem) =>
+          contentItem.dataID === deltaPluginDataID &&
+          contentItem.disabled === false
+      );
+
+      if (enabledDeltaPluginContentItems.length > 0) {
+        logMessage("Disabling previous DeltaPlugin content...");
+        await Promise.all(
+          enabledDeltaPluginContentItems.map((contentItem) =>
             modsListManager.toggleContent(contentItem.id)
           )
         );
