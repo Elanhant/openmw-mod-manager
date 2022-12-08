@@ -42,7 +42,7 @@ function parseCfg(rawCfgFile) {
         values: new Set(),
       });
     }
-    cfgMap.get(key).values.add(value);
+    cfgMap.get(key)?.values.add(value);
     i++;
   }
 
@@ -67,7 +67,7 @@ function stringifyCfg(cfgParsed) {
     }
 
     const key = matches[1];
-    for (const value of cfgParsed.cfgConfigMap.get(key).values) {
+    for (const value of cfgParsed.cfgConfigMap.get(key)?.values ?? []) {
       lines.push(`${key}=${value}`);
     }
   }
@@ -88,7 +88,13 @@ function updateOrSetValuesForKey(cfg, key, updater) {
     });
   }
 
-  cfg.cfgConfigMap.get(key).values = updater(cfg.cfgConfigMap.get(key).values);
+  const config = cfg.cfgConfigMap.get(key);
+
+  if (config == null) {
+    throw new Error(`Could not find config for key "${key}"`);
+  }
+
+  config.values = updater(config.values);
 
   return cfg;
 }

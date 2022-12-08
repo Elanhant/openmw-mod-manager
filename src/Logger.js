@@ -12,7 +12,7 @@ const LogLevel = {
  * @property {string} message
  * @property {LogLevel} level
  * @property {number} timestamp
- * @property {Error} error
+ * @property {?Error} error
  */
 
 /**
@@ -30,7 +30,7 @@ function Logger() {
     /**
      * @param {string} message
      * @param {LogLevel} level
-     * @param {Error} error
+     * @param {?Error} [error]
      */
     log(message, level = LogLevel.Info, error = null) {
       const newMessage = {

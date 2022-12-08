@@ -69,7 +69,7 @@ const OPENMW_CFG_CONTENT_KEY = "content";
  * @async
  * @callback addDataFn
  * @param {string[]} dataFolderPaths
- * @param {?number} insertIdx
+ * @param {?number} [insertIdx]
  * @returns {Promise<void>}
  */
 
@@ -240,6 +240,18 @@ function ModsListManager({ configPath, logMessage }) {
   }
 
   /**
+   * @returns {ModsListManagerState}
+   */
+  function getCurrentState() {
+    if (currentState == null) {
+      throw new Error(
+        "Trying to access list manager's state before it's been initialized"
+      );
+    }
+    return currentState;
+  }
+
+  /**
    * @typedef {Object} ModsListListeners
    * @property {changeEventCallback[]} change
    */
@@ -269,7 +281,7 @@ function ModsListManager({ configPath, logMessage }) {
   async function saveModsListConfigToFile() {
     await fsPromises.writeFile(
       configPath,
-      JSON.stringify(stateToConfig(currentState), null, 2)
+      JSON.stringify(stateToConfig(getCurrentState()), null, 2)
     );
   }
 
@@ -303,9 +315,17 @@ function ModsListManager({ configPath, logMessage }) {
   function getModName(dataFolder) {
     const parts = dataFolder.split(/[/\\]/);
     let modName = parts.pop();
+    if (modName == null) {
+      throw new Error(`Could not get mod name from data folder ${dataFolder}`);
+    }
     if (/^\d\d/.test(modName)) {
       const variantName = modName;
       modName = parts.pop();
+      if (modName == null) {
+        throw new Error(
+          `Could not get mod and mod variant name from data folder ${dataFolder}`
+        );
+      }
       return `${modName} [${variantName}]`;
     }
     return modName;
@@ -318,7 +338,8 @@ function ModsListManager({ configPath, logMessage }) {
 
   /** @type {addDataFn} */
   async function addData(dataFolderPaths, insertIdx) {
-    const nextState = produce(currentState, (draft) => {
+    const prevState = getCurrentState();
+    const nextState = produce(prevState, (draft) => {
       const newDataItems = dataFolderPaths
         .filter(
           (dataFolderPath) =>
@@ -340,7 +361,7 @@ function ModsListManager({ configPath, logMessage }) {
       draft.data.splice(insertIdx, 0, ...newDataItems);
     });
 
-    const prevDataCount = currentState.data.length;
+    const prevDataCount = prevState.data.length;
     const nextDataCount = nextState.data.length;
 
     await applyStateChanges(nextState);
@@ -377,11 +398,11 @@ function ModsListManager({ configPath, logMessage }) {
     async init(cfg) {
       currentState = await initializeModsListManagerState();
       if (currentState.data.length === 0) {
-        const dataFromCfg = cfg.cfgConfigMap.get("data").values || new Set();
-        await addData([...dataFromCfg]);
+        const dataFromCfg = cfg.cfgConfigMap.get("data")?.values ?? new Set();
+        await addData([...dataFromCfg], null);
 
         const contentFromCfg =
-          cfg.cfgConfigMap.get(OPENMW_CFG_CONTENT_KEY).values || new Set();
+          cfg.cfgConfigMap.get(OPENMW_CFG_CONTENT_KEY)?.values ?? new Set();
 
         const contentFiles = (await getContentFilesFromData(currentState.data))
           .map(({ dataItem, contentFileNames }) =>
@@ -425,16 +446,19 @@ function ModsListManager({ configPath, logMessage }) {
     async getState() {
       const contentMap = new Map(
         // Content files from later data items will override files from earlier ones
-        currentState.content.map((contentItem) => [contentItem.id, contentItem])
+        getCurrentState().content.map((contentItem) => [
+          contentItem.id,
+          contentItem,
+        ])
       );
 
       return {
-        ...currentState,
+        ...getCurrentState(),
         content: [...contentMap.values()],
       };
     },
     async changeDataOrder(nextData) {
-      const nextState = produce(currentState, (draft) => {
+      const nextState = produce(getCurrentState(), (draft) => {
         draft.data = nextData;
       });
 
@@ -442,7 +466,7 @@ function ModsListManager({ configPath, logMessage }) {
     },
     addData,
     async toggleData(dataID) {
-      const nextState = await produce(currentState, async (draft) => {
+      const nextState = await produce(getCurrentState(), async (draft) => {
         const dataItemIndex = draft.data.findIndex(
           (dataItem) => dataItem.id === dataID
         );
@@ -479,6 +503,11 @@ function ModsListManager({ configPath, logMessage }) {
       const updatedDataItem = nextState.data.find(
         (dataItem) => dataItem.id === dataID
       );
+
+      if (updatedDataItem == null) {
+        throw new Error(`Could not find data item ${dataID}`);
+      }
+
       logMessage(
         updatedDataItem.disabled
           ? `Disabled ${updatedDataItem.name}`
@@ -486,38 +515,41 @@ function ModsListManager({ configPath, logMessage }) {
       );
     },
     async removeData(dataID) {
-      const nextState = produce(currentState, (draft) => {
+      const prevState = getCurrentState();
+      const nextState = produce(prevState, (draft) => {
         draft.data = draft.data.filter((dataItem) => dataItem.id !== dataID);
         draft.content = draft.content.filter(
           (contentItem) => contentItem.dataID !== dataID
         );
       });
 
-      const removedDataItem = currentState.data.find(
+      const removedDataItem = prevState.data.find(
         (dataItem) => dataItem.id === dataID
       );
 
       await applyStateChanges(nextState);
+
+      if (removedDataItem == null) {
+        throw new Error(`Could not find data item ${dataID}`);
+      }
 
       logMessage(`Removed ${removedDataItem.name}`);
     },
     convertContentToGameFiles() {
       return `
 [Game Files]
-${currentState.content
-  .filter((contentItem) => !contentItem.disabled)
+${getCurrentState()
+  .content.filter((contentItem) => !contentItem.disabled)
   .map((contentItem, idx) => `GameFile${idx}=${contentItem.id}`)
   .join("\r\n")}`;
     },
     async applyChangesToCfg(cfg) {
-      if (currentState == null) {
-        throw new Error("No state to apply to OpenMW config!");
-      }
+      const state = getCurrentState();
 
       /**
        * @type {Promise<{ bsaFiles: string[], contentFiles: string[], data: OpenMWData }>[]}
        */
-      const dataPromises = currentState.data.map(
+      const dataPromises = state.data.map(
         (dataItem) =>
           new Promise(async (resolve) => {
             const { bsaFiles, contentFiles } = await collectDataFilesInfo(
@@ -587,7 +619,7 @@ ${currentState.content
           OPENMW_CFG_CONTENT_KEY,
           () =>
             new Set(
-              currentState.content
+              state.content
                 .filter((contentItem) => !contentItem.disabled)
                 .map((contentItem) => contentItem.id)
             )
@@ -595,7 +627,7 @@ ${currentState.content
       });
     },
     async toggleContent(contentID) {
-      const nextState = await produce(currentState, async (draft) => {
+      const nextState = await produce(getCurrentState(), async (draft) => {
         const contentItemIndex = draft.content.findIndex(
           (contentItem) => contentItem.id === contentID
         );
@@ -608,6 +640,11 @@ ${currentState.content
       const updatedContentItem = nextState.content.find(
         (contentItem) => contentItem.id === contentID
       );
+
+      if (updatedContentItem == null) {
+        throw new Error(`Could not find content item ${contentID}`);
+      }
+
       logMessage(
         updatedContentItem.disabled
           ? `Disabled ${updatedContentItem.name}`
@@ -615,14 +652,14 @@ ${currentState.content
       );
     },
     async changeContentOrder(updatedLoadOrder) {
-      const nextState = produce(currentState, (draft) => {
+      const nextState = produce(getCurrentState(), (draft) => {
         draft.content = updatedLoadOrder;
       });
 
       await applyStateChanges(nextState);
     },
     async applyContentOrderFromMlox(updatedLoadOrder) {
-      const nextState = produce(currentState, (draft) => {
+      const nextState = produce(getCurrentState(), (draft) => {
         const updatedOrderMap = updatedLoadOrder.reduce(
           (memo, fileName, idx) => ({ ...memo, [fileName]: idx }),
           {}
@@ -659,23 +696,24 @@ ${currentState.content
       await applyStateChanges(nextState);
     },
     async checkFileOverrides() {
+      const state = getCurrentState();
       const dataWithFiles = await Promise.all(
-        currentState.data.map((dataItem) => getFiles(dataItem.dataFolder))
+        state.data.map((dataItem) => getFiles(dataItem.dataFolder))
       );
       /** @type {Map<string, string[]>} */
       const dataFilesMap = new Map();
       /** @type {Map<string, string[]>} */
       const fileToDataMap = new Map();
       for (const [dataIdx, dataFiles] of dataWithFiles.entries()) {
-        const dataID = currentState.data[dataIdx].id;
-        const dataFolder = currentState.data[dataIdx].dataFolder;
+        const dataID = state.data[dataIdx].id;
+        const dataFolder = state.data[dataIdx].dataFolder;
         dataFilesMap.set(dataID, dataFiles);
         for (const fileName of dataFiles) {
           const relativeFilePath = path.relative(dataFolder, fileName);
           if (!fileToDataMap.has(relativeFilePath)) {
             fileToDataMap.set(relativeFilePath, []);
           }
-          fileToDataMap.get(relativeFilePath).push(dataID);
+          fileToDataMap.get(relativeFilePath)?.push(dataID);
         }
       }
       return fileToDataMap;

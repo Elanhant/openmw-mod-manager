@@ -123,6 +123,18 @@ function ModManager({
   let modsListManager = null;
 
   /**
+   * @returns {import('./ModsListManager').ModsListManager}
+   */
+  function getCurrentModsListManager() {
+    if (modsListManager == null) {
+      throw new Error(
+        "Trying to access list manager before it's been initialized"
+      );
+    }
+    return modsListManager;
+  }
+
+  /**
    * @param {ModManagerConfigKey} key
    * @returns {string}
    */
@@ -413,7 +425,7 @@ function ModManager({
      * @returns {Promise<ModManagerDataForUI>}
      */
     async getDataForUI() {
-      return await modsListManager.getState();
+      return await getCurrentModsListManager().getState();
     },
     /**
      *
@@ -421,7 +433,7 @@ function ModManager({
      * @returns {function():void}
      */
     addModsChangeEventListener(callback) {
-      return modsListManager.addListener("change", callback);
+      return getCurrentModsListManager().addListener("change", callback);
     },
     /**
      *
@@ -526,7 +538,7 @@ function ModManager({
       logMessage(`Successfully updated content order`);
     },
     async checkFileOverrides() {
-      return await modsListManager.checkFileOverrides();
+      return await getCurrentModsListManager().checkFileOverrides();
     },
     restoreOpenMWConfig: restoreOpenMWConfigFromBackup,
     async runOpenMW() {
@@ -536,7 +548,9 @@ function ModManager({
       const openMWLauncherPath = await getOpenMWLauncherPath();
 
       const cfg = await parseOpenMWConfig();
-      const updatedCfg = await modsListManager.applyChangesToCfg(cfg);
+      const updatedCfg = await getCurrentModsListManager().applyChangesToCfg(
+        cfg
+      );
       await saveOpenMWConfig(updatedCfg);
 
       try {
@@ -552,7 +566,9 @@ function ModManager({
 
       const omwllfExecutablePath = await getOMWLLFExecutablePath();
 
-      const currentState = await modsListManager.getState();
+      const currentModsListManager = getCurrentModsListManager();
+
+      const currentState = await currentModsListManager.getState();
       const enabledOMWLLFContentItems = currentState.content.filter(
         (contentItem) =>
           contentItem.dataID === omwllfDataID && contentItem.disabled === false
@@ -562,13 +578,13 @@ function ModManager({
         logMessage("Disabling previous OMWLLF content...");
         await Promise.all(
           enabledOMWLLFContentItems.map((contentItem) =>
-            modsListManager.toggleContent(contentItem.id)
+            currentModsListManager.toggleContent(contentItem.id)
           )
         );
       }
 
       const cfg = await parseOpenMWConfig();
-      const updatedCfg = await modsListManager.applyChangesToCfg(cfg);
+      const updatedCfg = await currentModsListManager.applyChangesToCfg(cfg);
       await saveOpenMWConfig(updatedCfg);
 
       try {
@@ -604,7 +620,7 @@ function ModManager({
           });
           process.stdout.on("end", () => {
             if (errorMessage === "") {
-              resolve();
+              resolve(true);
             } else {
               reject(new Error(errorMessage));
             }
@@ -622,18 +638,20 @@ function ModManager({
       }
 
       try {
-        await modsListManager.removeData(omwllfDataID);
+        await currentModsListManager.removeData(omwllfDataID);
       } catch {}
 
-      await modsListManager.addData([omwllfDataFolder]);
-      await modsListManager.toggleData(omwllfDataID);
+      await currentModsListManager.addData([omwllfDataFolder]);
+      await currentModsListManager.toggleData(omwllfDataID);
     },
     async runDeltaPlugin() {
       await backupOpenMWConfig();
 
+      const currentModsListManager = getCurrentModsListManager();
+
       const deltaPluginExecutablePath = await getDeltaPluginExecutablePath();
 
-      const currentState = await modsListManager.getState();
+      const currentState = await currentModsListManager.getState();
       const enabledOMWLLFContentItems = currentState.content.filter(
         (contentItem) =>
           contentItem.dataID === omwllfDataID && contentItem.disabled === false
@@ -643,7 +661,7 @@ function ModManager({
         logMessage("Temporarily disabling OMWLLFMod...");
         await Promise.all(
           enabledOMWLLFContentItems.map((contentItem) =>
-            modsListManager.toggleContent(contentItem.id)
+            currentModsListManager.toggleContent(contentItem.id)
           )
         );
       }
@@ -657,13 +675,13 @@ function ModManager({
         logMessage("Disabling previous DeltaPlugin content...");
         await Promise.all(
           enabledDeltaPluginContentItems.map((contentItem) =>
-            modsListManager.toggleContent(contentItem.id)
+            currentModsListManager.toggleContent(contentItem.id)
           )
         );
       }
 
       const cfg = await parseOpenMWConfig();
-      const updatedCfg = await modsListManager.applyChangesToCfg(cfg);
+      const updatedCfg = await currentModsListManager.applyChangesToCfg(cfg);
       await saveOpenMWConfig(updatedCfg);
 
       try {
@@ -694,18 +712,18 @@ function ModManager({
           logMessage("Enabling previously disabled OMWLLFMod...");
           await Promise.all(
             enabledOMWLLFContentItems.map((contentItem) =>
-              modsListManager.toggleContent(contentItem.id)
+              currentModsListManager.toggleContent(contentItem.id)
             )
           );
         }
       }
 
       try {
-        await modsListManager.removeData(deltaPluginDataID);
+        await currentModsListManager.removeData(deltaPluginDataID);
       } catch {}
 
-      await modsListManager.addData([deltaPluginDataFolder]);
-      await modsListManager.toggleData(deltaPluginDataID);
+      await currentModsListManager.addData([deltaPluginDataFolder]);
+      await currentModsListManager.toggleData(deltaPluginDataID);
     },
   };
 }

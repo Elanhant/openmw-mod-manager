@@ -86,6 +86,13 @@
   let dataItems = [];
 
   /**
+   * @type {Map<string, import('./ModsListManager.js').OpenMWData[]>}
+   */
+  $: dataItemsMap = new Map(
+    dataItems.map((dataItem) => [dataItem.id, dataItem])
+  );
+
+  /**
    * @type {Map<string, string>}
    */
   $: dataNames = new Map(
