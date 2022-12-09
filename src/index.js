@@ -8,7 +8,7 @@
  *  - dump logs to file
  *  - prisma + sqlite?
  */
-
+require("ts-node").register();
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
 const fsPromises = require("fs").promises;
